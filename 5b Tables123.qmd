@@ -1,0 +1,398 @@
+---
+title: "5b Tables123"
+author: "Andrea Portt"
+format: docx
+editor: visual
+---
+
+# Packages & data
+
+```{r packages, message=FALSE}
+
+
+library(dplyr); 
+library("stringr"); 
+library(tidyr); 
+library('correlation')
+library(ggplot2)
+library(tidyverse)
+library(gtsummary)
+
+```
+
+```{r}
+#| output: false 
+
+#MB dataset 
+load("~/2024_11_15_MB.Rdata")
+
+```
+
+# Results
+
+## Figure 1: Inclusion
+
+```{r}
+
+#| print: false 
+#| echo: false
+
+#Number in original dataset
+#n_distinct(MB$random_uid)
+# 10215
+
+```
+
+# Keep those w migraine
+
+In this section I will select participants who had at least one migraine onset during the study period. This will remove participants who reported attacks that were not migraine (eg cluster headache, tension headache) and participants who reported migraine attacks outside of the study period.
+
+```{r}
+
+
+# Create a subset of rows with at least one migraine onset
+A <- data %>% 
+        filter(mx_onset >= 1) 
+
+#number of random_uids with at least one migraine: 7,418
+n_distinct(A$random_uid)
+
+#Make a list of unique IDs with at least one onset
+#Turn list into a data table
+#Make a random_uid column
+B <-   unique(A$random_uid) 
+B <- as.data.table(B)
+B$random_uid <- B$B
+
+#Merge random_uids with one onset with MB database
+# inner_join() keeps rows from x that have a matching key in y.
+MB_mx <- data |> 
+  semi_join(B, join_by(random_uid))
+
+#Stop and check: yes there are 7,418 random_uids in the MB_mx dataset
+n_distinct(MB_mx$random_uid)
+
+#Save out the MB_mx dataset as a .csv so it can be rendered
+write.csv(MB_mx, "~/2024_12_06_MB_mx.csv")
+
+
+
+```
+
+# Table 1
+
+Includes folks who moved to different 10km^2^ areas
+
+```{r}
+# Create a subset with at least one migraine onset
+A <- data %>% 
+        filter(mx_onset >= 1) 
+
+#number of mobile participants with at least one migraine onset: 7,418
+n_distinct(A$random_uid)
+
+#To count gender
+#Among mobile participantnts with at least one onset
+B <- A %>% 
+        group_by(gender) %>% 
+        summarize(n_distinct(random_uid))
+
+	
+#gender
+#n_distinct(random_uid)
+
+#F
+#4946
+
+#M
+#519
+
+#Unknown
+#1953
+
+#Mean number of migraine onsets among people with at least one onset 
+#Get counts of onsets per individual
+T1 <- data %>% 
+        group_by(random_uid) %>% 
+        count(mx_onset)
+
+T2 <- T1 %>% 
+      filter(mx_onset == 1) 
+
+summary(T2$n)
+#   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+ # 1.000   2.000   5.000   9.411  10.000 151.000  
+ 
+hist(T2$n)
+
+#Age overall mean
+E <- data %>% 
+        group_by(random_uid, gender, age) %>% 
+        count
+
+G <- A %>% 
+        drop_na(age)
+
+#Number of participants with age data: 2441
+n_distinct(G$random_uid)
+
+# missing age data
+# 7418-2441 = 4977
+
+#Take the ~ mean age per participant by mean of all attacks
+H <- G %>% 
+        group_by(random_uid) %>% 
+        summarize(mean_age = mean(age))
+        
+summary(H)
+
+#random_uid           mean_age     
+# Length:2441        Min.   : 6.244  
+# Class :character   1st Qu.:25.333  
+# Mode  :character   Median :33.000  
+ #                   Mean   :34.343  
+  #                  3rd Qu.:42.200  
+   #                 Max.   :80.000 
+
+
+
+
+```
+
+### Event counts
+
+```{r}
+sum(MB_mx$mx_onset)
+#69808
+
+sum(MB_mx_immobile$mx_onset)
+#14526
+
+#Let's  count migraine days in the dataset for 
+sum(MB_mx$migraine_day, na.rm = TRUE)
+
+```
+
+| Variable | N = 7,418 | N = 2 989 |
+|------------------------|------------------------|------------------------|
+| Sex (n, %) |  |  |
+| female | 4,946 | 2001 ( `r (2001/2989)` ) |
+| male | 519 | 207 ( `r (207/2989`) |
+| missing | 1953 | 781 ( `r (781/2989`) |
+| Age (mean, range) | 34.3 (6.2, 80.0) | 34.7 (10.0, 78.0) |
+| missing | 4977 | `r (2989-991)` |
+| Rural locations, n (%) |  |  |
+| Number of attack onsets | 69,808 | 14,526 |
+| Recorded migraine attacks per individual (mean, range) | 9.4 (1, 151) | 4.9 (1, 82) |
+
+```{r}
+
+#Then cast it so each person has 1 row
+library(reshape2)
+T2 <- dcast(T1, random_uid ~ mx_onset + n)
+T3 <- dcast(T1, random_uid + n ~ mx_onset)
+colnames(T3)[3] ="non_onset_days"
+colnames(T3)[4] = "mx_onsets"
+
+T4 <- dcast(T3, random_uid ~ )
+T5 <- T3[,1:2]
+T6 <- dcast(T5, random_uid ~ n)
+
+T7 <- T3 %>% 
+        group_by(random_uid) %>% 
+        summarize("non_onset_days")
+
+#And sum the columns into zero and mx_onset_count
+#New variable zero = sum columns 2:N
+
+mx_onsets <- mx_onsets[mx_onsets$mx_onset == 1,]
+mx_onsets <- subset(mx_onsets, select = -(mx_onset))
+
+mx_onsets <- mx_onsets %>% 
+        rename(
+                local_mx_onsets = n
+        )
+
+
+
+```
+
+Link to practice "casting" to wide dataset https://www.digitalocean.com/community/tutorials/r-melt-and-cast-function
+
+https://ademos.people.uic.edu/Chapter8.html
+
+https://search.r-project.org/CRAN/refmans/reshape/html/cast-9g.html
+
+```{r}
+#| echo: false
+#| print: false
+
+#Need to group by random_uid and summarize age, sex, and self_report
+#Check how I did this for coding challenge: was given wide format
+
+#First select the columns of interest
+#Need to specify dplyr because MASS also has a select()
+cast_MB_immobile <- dplyr::select(X2024_11_12_immobile_1000,  c(random_uid, age, sex, self_report))
+
+cast_MB_immobile2 = dcast(cast_MB_immobile, random_uid~sex) 
+
+
+cast_MB_immobile3 = dcast(cast_MB_immobile, random_uid~self_report) 
+
+cast_MB_immobile4 = dcast(cast_MB_immobile, na.rm = TRUE, random_uid~age)
+
+
+summaryT1 <- data %>% 
+            group_by(random_uid) %>% 
+            summarize(age)
+            
+
+
+#To build table and give it a name for export:
+table1 <- MB_mx %>% 
+        # Select the variables to be included in the table
+        select(age, sex, self_report
+               ) %>%
+        tbl_summary(
+                statistic = list(all_continuous()  ~ "{mean} ({min}, {max})"),
+                label = list(
+                       
+                        age ~ "Age", 
+                        sex ~ "Sex",
+                        self_report  ~ "Mentioned migraine as Attack Type"
+                 )) %>% 
+        modify_header(label = "**Variable**") %>% 
+        modify_footnote(all_stat_cols() ~ "1. Mean (range); n (%). ) %>% 
+        bold_labels()
+
+table1
+
+#Export as docx
+#Then copy into csv
+table1 %>% 
+ as_flex_table() %>% 
+  flextable::save_as_docx(path ="MyTable1.docx")
+
+
+
+```
+
+# Table 2: Exposure ranges
+
+I can render this straight into the manuscript for the immobile subset, but need to do by hand for the larger, mobile dataset that can't be read in during rendering:
+
+```{r}
+
+#temperature
+min(MB_mx$temp_12, na.rm = TRUE)
+quantile(MB_mx$temp_12, probs= 0.5, na.rm = TRUE)
+max(MB_mx$temp_12, na.rm = TRUE)
+IQR(MB_mx$temp_12, na.rm = TRUE)
+
+#[1] -38.83
+# 50% 
+#6.12 
+#[1] 29.12
+#[1] 16.95
+
+#specific humidity 
+min(MB_mx$humid_12, na.rm = TRUE)
+quantile(MB_mx$humid_12, probs= 0.5, na.rm = TRUE)
+max(MB_mx$humid_12, na.rm = TRUE)
+IQR(MB_mx$humid_12, na.rm = TRUE)
+
+# 8e-05
+ #   50% 
+#0.00488 
+#[1] 0.02108
+#[1] 0.00635
+
+# change in barometric pressure
+min(MB_mx$pres_change_24h, na.rm = TRUE)
+quantile(MB_mx$pres_change_24h, probs= 0.5, na.rm = TRUE)
+max(MB_mx$pres_change_24h, na.rm = TRUE)
+IQR(MB_mx$pres_change_24h, na.rm = TRUE)
+
+#[1] -4617.844
+ #     50% 
+#-10.25781 
+#[1] 4704.102
+#[1] 942.2969
+
+#NO2
+min(MB_mx$no2 , na.rm = TRUE)
+quantile(MB_mx$no2 , probs= 0.5, na.rm = TRUE)
+max(MB_mx$no2 , na.rm = TRUE)
+IQR(MB_mx$no2 , na.rm = TRUE)
+
+#[1] 0.0092
+ #  50% 
+#5.2368 
+#[1] 60.368
+#[1] 7.4753
+
+
+# O3
+min(MB_mx$o3 , na.rm = TRUE)
+quantile(MB_mx$o3 , probs= 0.5, na.rm = TRUE)
+max(MB_mx$o3 , na.rm = TRUE)
+IQR(MB_mx$o3 , na.rm = TRUE)
+
+#[1] 0.77
+ # 50% 
+#27.52 
+#[1] 103.13
+#[1] 12.73
+
+# PM2.5
+min(MB_mx$pm25 , na.rm = TRUE)
+quantile(MB_mx$pm25 , probs= 0.5, na.rm = TRUE)
+max(MB_mx$pm25 , na.rm = TRUE)
+IQR(MB_mx$pm25 , na.rm = TRUE)
+
+#[1] 0.005
+ # 50% 
+#5.571 
+#[1] 68.462
+#[1] 7.21
+
+# SO2
+min(MB_mx$so2 , na.rm = TRUE)
+quantile(MB_mx$so2 , probs= 0.5, na.rm = TRUE)
+max(MB_mx$so2 , na.rm = TRUE)
+IQR(MB_mx$so2 , na.rm = TRUE)
+
+#[1] 0
+ #  50% 
+#1.0569 
+#[1] 288.9383
+# [1] 1.7666
+
+```
+
+# Table 3: Correlation co-efficients
+
+Note: Temperature and humidity are highly correlated, r = \~ 0.92. NO2 and PM2.5 are somewhat correlated, r = \~ 0.78.
+
+"When I talk about temperature, I'm also talking about humidity."
+
+```{r}
+#| echo: false
+
+#Calculate individual-level correlation coefficients
+table <- data %>% 
+        group_by(random_uid) %>% 
+         correlation(select = c("no2","o3", "pm25", "so2", "temp_12", "humid_12000", "pres_change_24h"))           
+table <- as.data.frame(table)
+
+#correlation coefficients 
+data_group <- select(data, c(no2, o3, pm25, so2, temp_12, humid_12000, pres_change_24h))
+
+group_corr <- data_group %>% 
+         correlation(select = c("no2","o3", "pm25", "so2", "temp_12", "humid_12000", "pres_change_24h"))           
+group_corr <- as.data.frame(group_corr)
+
+#write.csv(group_corr, "group_corr_MB_mx.csv")
+
+
+```

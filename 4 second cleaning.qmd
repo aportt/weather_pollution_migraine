@@ -1,0 +1,309 @@
+---
+title: "4 2024 second cleaning"
+author: "Andrea Portt"
+format: html
+editor: visual
+---
+
+# Second cleaning
+
+Quarto documents 1-3 cleaned Migraine Buddy data, connected migraine data to air pollution via postal code-date, and to weather via lat-long-date.
+
+Now there is further cleaning to do before analysis can begin.
+
+```{r}
+library("tidyverse")
+library("dplyr")
+
+#install.packages("data.table")
+library(data.table)
+
+library("stringr")
+
+```
+
+```{r}
+#| echo: false
+#| print: false
+
+#read in
+  MB <- read.csv("~/2024_04_25_mb_ap.csv")
+
+MB <- read.csv("~/MB_air_pollution/2024_04_25_mb_ap.csv")
+
+setwd("~/MB")
+
+library(readr)
+MB <- read_csv("2024_04_25_mb_ap.csv")
+View(MB)
+
+
+
+```
+
+# Set as .Rdata workspace
+
+```{r}
+save(MB, file="~/2024_04_25_data.Rdata")
+
+
+
+```
+
+# Read in
+
+.Rdata file is smaller than .csv.
+
+```{r}
+
+
+load(file="~/2024_04_25_data.Rdata")
+
+```
+
+# Random subset
+
+Picking a random subset of 800 participants to work with in initial stages/for setting up code.
+
+```{r}
+#Pick a subset to work with
+set.seed(123) # Set seed for reproducibility
+radnom_sampledata <- MB_mx_immobile %>%
+  distinct(random_uid) %>%
+  sample_n(size = 800)
+
+
+data <- left_join(radnom_sampledata, MB_mx_immobile)
+
+save(data, file="~/2024_12_09_random800.Rdata")
+
+load("~/2024_12_09_random800.Rdata")
+
+```
+
+# Clean columns
+
+Removing extra columns that were artifacts of merging steps.
+
+```{r}
+#| echo: false
+#| print: false
+
+
+data <- subset(data, select= -c(X, X.1.x, X.x, X.3, X.2, X.1.y, date.y, new))
+
+data <- data %>% 
+  rename(
+    date = date.x
+    )
+
+
+```
+
+# Set order
+
+```{r}
+#|echo: false
+#| print: false
+ 
+#Sort into order for the look of things
+data <- data %>% arrange(random_uid, date)
+
+# ORDER (IMPORTANT FOR KEEPING THE TIME SERIES SEQUENCE BY random_uid)
+#Setkey fixes  the order into the dataset, rather than simply putting the dataset in order
+#Should speed up analysis
+
+data <- as.data.table(data)
+setkey(data, random_uid, date)
+
+```
+
+# Gender
+
+The Case Time Series design controls for sex and gender, but we may look at gender as an effect modifier.
+
+Sex is not reported in Migraine Buddy, only gender. There is a lot of missingness.
+
+```{r}
+#|echo: false
+#| print: false
+
+#Stop and Check 
+#Does anyone have more than one gender listed?
+#For each uid, count genders
+#10,215 uids
+MB_uid <- MB %>% 
+        group_by(random_uid) %>% 
+        summarize()
+
+#20,430 genders listed
+MB_gender <- MB %>% 
+        group_by(random_uid, gender) %>% 
+        summarize()
+
+#Drop rows with NA in gender
+#Brings us back to 10,215 observations - so each uid has a single listed gender as well as NAs on non-migraine days
+MB_gender <- MB_gender[!is.na(MB_gender$gender),]
+
+```
+
+```{r}
+# Fill gender up and down by individual
+data <- data %>% 
+        group_by(random_uid) %>% 
+        fill(gender, .direction = "downup")
+
+
+#for full dataset
+# Fill gender up and down by individual
+MB <- MB %>% 
+        group_by(random_uid) %>% 
+        fill(gender, .direction = "downup")
+
+
+
+```
+
+# Age - trim
+
+Age: ranges are from -2 to 114
+
+Look at histogram, there's an obvious pattern - a small group of records "aged" -2 to 4 years old. Also nobody older than 80 until a small group apparently over 100 years old
+
+Values less than 5 were considered missing, as were values greater than 100.
+
+Note: Age is also time-varying, is recorded at time of event in event row. (And is controlled for in CTS, but may be effect modifier)
+
+```{r}
+
+ages <- MB %>% 
+        group_by(random_uid) %>% 
+        count(age, .drop = TRUE)
+
+ages <- ages[!is.na(ages$age),]
+
+hist(ages$age, breaks  = 117)
+
+min(ages$age)
+max(ages$age)
+
+#38 individuals w ages < 5
+sum(ages$age <5 )
+
+# 9 individuals with ages >100
+sum(ages$age > 100)
+
+#Set ages < 5 and > 100 to NA
+data$age <- ifelse (data$age < 5 |
+                          data$age > 100 
+                          , "NA", data$age)
+
+MB$age <- ifelse (MB$age < 5 |
+                          MB$age > 100 
+                          , "NA", MB$age)
+
+```
+
+# Day month year columns
+
+```{r}
+
+#Need to fill year month day columns where there's no event
+
+#start by dropping the mostly empty columns by those names
+data <- subset(data, select = -c(year,month,day))
+
+#Then re-calculate from "date"
+#data$date <- as.character(data$date)
+
+data$date <- as.Date(data$date)
+
+#data$date <- as.Date(data$date, "%Y-%m-%d")
+
+data[c('year', 'month', "day")] <- str_split_fixed(data$date, '-', n = Inf)
+
+data %>%
+  tidyr::separate(date, into = c('year', 'month', "day"), sep = "-")
+
+#Relocate
+data <- data %>%  relocate(c(year,month, day, dow), .after = date)
+
+```
+
+# Other covariates
+
+Short term critical (according to WHO): temperature, seasonality \[controlled for within btrend\], day of week \[dow covariate\], long term trends - also in btrend, and year-month.
+
+Short term other potential: (WHO) : Holidays, (influenza – no known link to migraine unlike respiratory and cardiac), (Me): Fireworks, Humidity, Barometric pressure
+
+## Ontario holidays
+
+<https://search.r-project.org/CRAN/refmans/lares/html/holidays.html>
+
+```{r}
+#Add a column of Ontario holidays by date
+#Or Canadian and then add Ontario
+#https://www.statutoryholidays.com/2019.php
+
+holidays <- as.Date(c("2019-01-01", "2019-02-18", "2019-04-19", "2019-05-20", "2019-07-01", "2019-08-05", "2019-09-02", "2019-10-14", "2019-12-25", "2019-12-26", 
+"2018-01-01", "2018-02-19", "2018-03-30", "2018-05-21", "2018-07-01", "2018-08-06", "2018-09-03", "2018-10-08", "2018-12-25", "2018-12-26",
+"2017-01-01", "2017-02-20", "2017-04-14", "2017-05-22", "2017-07-01", "2017-08-07", "2017-09-04", "2017-10-09", "2017-12-25", 
+"2017-12-26"))
+
+data$holiday <- as.numeric(data$date %in% holidays)
+
+#Relocate
+data <- data %>%  relocate(holiday, .after = dow)
+
+```
+
+## Self-reported migraine
+
+Set up in 1\_\[date\]\_migraine_cleaning.qmd so that if the attack type was recorded as migraine by a user at any point, that user is assumed to be self-reporting migraines at every event.
+
+I made this assumption because attack_type isn't always filled.
+
+Now I need to flag onsets by self-reporters as *migraine* onsets.
+
+```{r}
+
+
+data$mx_onset <- ifelse (data$self_report == "1" &
+                              data$onset == "1"
+                          , 1, 0 )
+
+#Relocate
+data <- data %>%  relocate(mx_onset, .after = onset)
+
+```
+
+# Save as .Rdata
+
+```{r}
+
+save(data, file="~\\2024_09_20_data.Rdata")  
+
+```
+
+## Read back in
+
+```{r}
+#MB dataset 
+load("~/2024_09_19_MB.Rdata")  
+
+```
+
+# Seasons
+
+Subset dataset so that I have separate winter (Dec-Jan-Feb) and summer (June-July-August) sets.
+
+```{r}
+
+winter <- data %>% 
+        filter(month == c("12", "01", "02"))
+
+summer <- data %>% 
+        filter(month == c("06", "07", "08"))
+
+
+```

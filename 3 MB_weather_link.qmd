@@ -1,0 +1,1083 @@
+---
+title: "3 weather_link"
+format: html
+editor: visual
+---
+
+### preamble:
+
+Migraine onset events were identified in 2024 \_02_12_Migraine_cleaning.qmd (or later dated files) and Data have been linked to air pollution in 2024_02_23_MB_air_pollution_link.qmd
+
+Make sure to link to the most up-to-date MB dataset with air pollution and onset events.
+
+# Weather
+
+In this qmd, I will import the ECCC weather GRIB2 raster data (temperature, humidity, pressure). These were pulled into multidimensional mosaics and we then extracted time series at the migraine event points and exported into csv files.
+
+The extracted weather data will be in database files with two rows per day.
+
+Need to split and concatenate so I have 1 row per day.
+
+Also need to to set all 00 UTC lines back 1 day, because 00 UTC is about 7 PM Ontario time, the day before.
+
+12 UTC is around 7 am Ontario time, so those dates are fine.
+
+# Setup
+
+```{r}
+install.packages("stringr")
+library(stringr)
+library(dplyr)
+library(tidyverse)
+
+```
+
+# Missing ECCC data
+
+In this section, I determine which dates and time points are missing from the dataset ECCC provided.
+
+There were 86x2 = 172 missing date/time points for the weather variables. These were supplied later by ECCC and had to be merged.
+
+```{r}
+#| echo: false
+#| print: false
+
+############### 
+
+#Make a list of the expected dates in the ECCC dataset
+date2 <- as.Date("2016-01-01") 
+
+# defining length of range  
+#1 (leap year in 2016, + (2017, 2018, 2019))
+len2 <- (366 + (365*3))
+
+# generating range of dates 
+dates2 <- as.Date(seq(date2, by = "day", length.out = len2))
+print(dates2)
+
+#Extract list of dates from UTC_00 temp (constructed to include 2016)
+temp_00_dates <- as.Date(unique(temp_00$date))
+print(temp_00_dates)
+
+#compare lists - what's in the full date sequence (dates2) that's not in temp_00_dates?
+#86 dates
+missing_dates_00_temp <- as.Date(setdiff(dates2, temp_00_dates))
+print(missing_dates_00_temp)
+
+#Repeat with temp_12
+#86 dates, but doesn't completely overlap with temp_00
+temp_12_dates <- as.Date(unique(temp_12$date))
+missing_dates_12_temp <- as.Date(setdiff(dates2, temp_12_dates))
+print(missing_dates_12_temp)
+
+#What dates are in temp_00 but missing in temp_12?
+#There are 45 dates that are present in temp_00 but not temp_12 
+different_missing <- as.Date(setdiff(temp_00_dates, temp_12_dates))
+print(different_missing)
+
+##Repeat for humidity
+#Extract list of dates from UTC_00 humidity (constructed to include 2016)
+humid_00_dates <- as.Date(unique(humid_00$date))
+
+#compare lists - what's in the full date sequence (dates2) that's not in humid_00_dates?
+#86 dates
+missing_dates_00_humid <- as.Date(setdiff(dates2, humid_00_dates))
+
+#Repeat with humid_12
+# 86 dates, but doesn't completely overlap with humid_00
+humid_12_dates <- as.Date(unique(humid_12$date))
+missing_dates_12_humid <- as.Date(setdiff(dates2, humid_12_dates))
+
+#What dates are in humid_00 but missing in humid_12?
+#There are 45 dates that are present in humid_00 but not humid_12 
+different_missing_humid <- as.Date(setdiff(humid_00_dates, humid_12_dates))
+print(different_missing_humid)
+
+#Make a dataframe listing the missing dates for temp_00 and temp_12
+missing = data.frame(unlist(missing_dates_00_temp),unlist(missing_dates_00_humid), unlist(missing_dates_12_temp), unlist(missing_dates_12_humid))
+
+##Repeat for barometric pressure
+#Extract list of dates from UTC_00 humidity (constructed to include 2016)
+pres_00_dates <- as.Date(unique(pres_00$date))
+
+#compare lists - what's in the full date sequence (dates2) that's not in pres_00_dates?
+#86 dates
+missing_dates_00_pres <- as.Date(setdiff(dates2, pres_00_dates))
+
+#Repeat with pres_12
+# 86 dates, but doesn't completely overlap with pres_00
+pres_12_dates <- as.Date(unique(pres_12$date))
+missing_dates_12_pres <- as.Date(setdiff(dates2, pres_12_dates))
+
+#What dates are in pres_00 but missing in pres_12?
+#There are 45 dates that are present in pres_00 but not pres_12 
+different_missing_pres <- as.Date(setdiff(pres_00_dates, pres_12_dates))
+print(different_missing_pres)
+
+#Make a dataframe listing the missing dates for temp_00 and temp_12
+missing = data.frame(unlist(missing_dates_00_temp),unlist(missing_dates_00_humid), unlist(missing_dates_00_pres), unlist(missing_dates_12_temp), unlist(missing_dates_12_humid), unlist(missing_dates_12_pres))
+
+
+#Write out to share with Environment and Climate Change Canada
+write.csv(missing, "/Users/AndieP/Library/CloudStorage/Dropbox/U_Toronto_web/Data_web/ECCC/Missing ECCC data/2023_12_19_missing.csv" )
+
+```
+
+# Temperature
+
+### Import csv files
+
+Need to start by merging the original temp file with the one that includes the missing dates sent in early 2024 by ECCC.
+
+https://stat.ethz.ch/R-manual/R-devel/library/foreign/html/read.dbf.html
+
+```{r}
+#| echo: false 
+#| include: false  
+
+#At home
+#temp <- read.csv ("/Users/AndieP/Library/CloudStorage/Dropbox/U_Toronto_web/Data_web/ECCC/Extraction/RDPS10km_TEMP.csv")
+
+#temp_original <- read.csv ("/Users/AndieP/Library/CloudStorage/Dropbox/U_Toronto_web/Data_web/ECCC/Extraction/RDPS10km_TEMP.csv")
+
+
+#Note: At MDL, the file paths can be a bit fussy in R 
+#Using the tilda helps  setwd("~/aportt/ECCC_weather/Extraction")  
+temp <- read.csv("~/aportt/ECCC_weather/Extraction/RDPS10km_TEMP.csv")
+
+#Add missing data that ECCC sent in 2024
+temp_missing <- read.csv ("~/aportt/ECCC_weather/Missing_weather_data/temp_missing.csv")
+
+#Drop ID columns, rename so column names match
+temp <- temp[-1]
+temp <- temp[-1]
+
+temp_missing <- temp_missing[-1]
+
+#merge incomplete first temp dataset with missing temp dataset
+temp <- rbind(temp, temp_missing)
+
+#Separate year-month-day w stringr
+install.packages("stringr")
+library(stringr)
+
+temp[c('date_utc', 'start_time')] <- str_split_fixed(temp$StdTime, ' ', n = Inf)
+temp[c('day', 'month', "year")] <- str_split_fixed(temp$date_utc, '/', n = Inf)
+
+
+#Convert from Kelvins to Celcius, -273.15
+temp$celcius <- (temp$tmp_htgl - 273.15)
+
+#Round temperatures and X and Y to 2 decimals
+#Rounding X and Y doesn't actually solve the merging challenge but does make it easier to read
+temp$celcius<- round(temp$celcius, 2)
+temp$X<- round(temp$X, 2)
+temp$Y<- round(temp$Y, 2)
+
+
+```
+
+### Dates and times
+
+```{r}
+#| echo: false 
+#| include: false  
+
+#Set time zone as America/New York to prevent rounding errors 
+ 
+ temp$date <- as.Date(temp$date, format = "%m/%d/%Y",                         
+                      tz = "America/New_York")  
+ 
+ #keep columns  
+ 
+ temp = subset(temp, select = c(X, Y, celcius, UTC_time, date )) 
+```
+
+### Split 00h and 12h
+
+```{r}
+#| echo: false 
+#| include: false  
+
+# Remove rows based on condition temp_00 <- temp[temp$UTC_time != 12, ]   
+#Reduce dates by one day to adjust for the fact that 0:00h UTC is 19:00 the day before in Ontario time 
+
+# Remove rows based on condition
+temp_00 <- temp[temp$UTC_time != 12, ]
+
+#Reduce dates by one day to adjust for the fact that 0:00h UTC is 19:00 the day before in Ontario time
+temp_00$date <- temp_00$date - 1
+
+#Coerce into dates
+#This isn't helping
+temp_00$date <- as.Date(temp_00$date, "%Y-%m-%d")
+
+
+# Remove rows based on condition
+temp_12 <-temp[temp$UTC_time != 0, ] 
+#Dates are already correct for UTC_12
+```
+
+### Rename columns
+
+```{r}
+#| echo: false 
+#| #| include: false  
+
+# Rename column by index  
+
+temp_00 <- temp_00 %>%         
+  rename(temp_00 = 3,)  
+temp_12 <- temp_12 %>%        
+  rename(temp_12 = 3,) 
+```
+
+### Concatenate location-dates and merge temperatures at 00 UTC and 12 UTC
+
+```{r}
+#| echo: false 
+#| #| include: false  
+#| 
+##concatenate X,Y (locations) and dates  
+
+temp_00$cat <- paste(temp_00$X, temp_00$Y, temp_00$date)  
+temp_12$cat <- paste(temp_12$X, temp_12$Y, temp_12$date)  
+
+#merge by location-dates 
+temps <- merge(x = temp_00, y = temp_12, by = "cat", all = TRUE)  
+
+#keep columns 
+temps = subset(temps, select = c(X.x, Y.x, date.x, temp_00, temp_12, cat ))  
+
+#rename columns 
+temps <- temps %>%  
+  rename(X = 1, 
+         Y = 2, 
+         date = 3) 
+
+
+#Remove 2016 and the last day of 2019 (because no air pollution data for last day of 2019)
+#Remove first and last rows (Dec 31st 2016 and no date/Jan 1 2020)
+temps <-temps[temps$date != "2016-12-31",]
+temps <- temps[!is.na(temps$date),]
+
+
+#write out temperatures
+ write.csv(temps,"//utl.utoronto.ca/Staff/Data/gispc2/My Documents/aportt/2024_03_01_temperatures.csv")
+
+
+
+```
+
+# Humidity
+
+Specific humidty (SPFH) from ECCC merged and extracted from GRIB2s
+
+Units are kg/kg
+
+<https://eccc-msc.github.io/open-data/msc-data/nwp_rdps/readme_rdps-datamart_en/>
+
+Need to start by merging the original file with the one that includes the missing dates sent in early 2024 by ECCC.
+
+```{r}
+#At home
+#humid <- read.csv ("~/RDPS10km_SPFH.csv")
+
+#Note: File paths can be a bit fussy in R 
+#Using the tilda helps  setwd("~/aportt/ECCC_weather/Extraction")  
+humid <- read.csv("~/aportt/ECCC_weather/Extraction/RDPS10km_SPFH.csv")
+
+
+#missing_humid <- read.csv()
+humid_missing <- read.csv ("~/aportt/ECCC_weather/Missing_weather_data/humid_missing.csv")
+
+#Drop ID columns, rename so column names match
+
+humid <- humid[-1]
+humid <- humid[-1]
+
+humid_missing <- humid_missing[-1]
+
+library(dplyr)
+humid <- humid %>% 
+                rename(
+                   UTC_time = UTC_Time
+                     )
+
+
+#merge incomplete first humid dataset with missing humid dataset
+humid <- rbind(humid, humid_missing)
+
+#Separate year-month-day w stringr
+install.packages("stringr")
+library(stringr)
+
+humid[c('date_utc', 'start_time')] <- str_split_fixed(humid$StdTime, ' ', n = Inf)
+humid[c('day', 'month', "year")] <- str_split_fixed(humid$date_utc, '/', n = Inf)
+
+#Remove year-month-day columns
+install.packages("tidyverse")
+library(tidyverse)
+
+humid <-humid %>% 
+       select (-c( Dimensions, year, month, day))
+
+#Round X and Y to 2 decimals
+#Rounding X and Y just makes it easier to read
+humid$X<- round(humid$X, 2)
+humid$Y<- round(humid$Y, 2)
+
+#Dates and times
+#Set time zone as America/New York to prevent rounding errors 
+ 
+ humid$date <- as.Date(humid$date, format = "%m/%d/%Y",         
+                      tz = "America/New_York")  
+ 
+ #keep columns  
+ humid = subset(humid, select = c(X, Y, spfh_htgl, UTC_time, date )) 
+ 
+##Split 00h and 12h
+ 
+# Remove rows based on condition
+humid_00 <- humid[humid$UTC_time != 12, ]
+#Reduce dates by one day to adjust for the fact that 0:00h UTC is 19:00 the day before in Ontario time
+humid_00$date <- humid_00$date - 1
+
+# Remove rows based on condition
+humid_12 <-humid[humid$UTC_time != 0, ] 
+#Dates are already correct for UTC_12
+
+# Rename column by index  (dplyr)
+humid_00 <- humid_00 %>%         
+  rename(humid_00 = 3,)  
+humid_12 <- humid_12 %>%        
+  rename(humid_12 = 3,) 
+
+##concatenate X,Y (locations) and dates  
+humid_00$cat <- paste(humid_00$X, humid_00$Y, humid_00$date)  
+humid_12$cat <- paste(humid_12$X, humid_12$Y, humid_12$date)  
+
+#merge by location-dates 
+humidities <- merge(x = humid_00, y = humid_12, by = "cat", all = TRUE)  
+
+#keep columns 
+humidities = subset(humidities, select = c(X.x, Y.x, date.x, humid_00, humid_12, cat))  
+ 
+
+#rename columns 
+humidities <- humidities %>%  
+  rename(X = 1, 
+         Y = 2, 
+         date = 3)
+
+#write out humidities
+ write.csv(humidities,"~/2024_03_01_humidities.csv")
+
+
+```
+
+# Pressure
+
+Barometric pressure (pres) from ECCC merged and extracted from GRIB2s with Cole White.
+
+Units are Pa (Pascals).
+
+<https://eccc-msc.github.io/open-data/msc-data/nwp_rdps/readme_rdps-datamart_en/>
+
+Need to start by merging the original file with the one that includes the missing dates sent in early 2024 by ECCC.
+
+```{r}
+#At home
+#pres <- read.csv ("~/RDPS10km_PRES.csv")
+
+#pres_original <- read.csv ("~/Extraction/RDPS10km_PRES.csv")
+
+#Using the tilda helps  setwd("~/aportt/ECCC_weather/Extraction")  
+pres <- read.csv("~/aportt/ECCC_weather/Extraction/RDPS10km_PRES.csv")
+
+pres_missing <- read.csv ("~/aportt/ECCC_weather/Missing_weather_data/pressure.csv")
+
+#Drop ID column, rename so column names match
+
+pres <- pres[-(1:2)]
+pres_missing <- pres_missing[-1]
+
+#merge incomplete first pressure dataset with missing pressure dataset
+pres <- rbind(pres, pres_missing)
+
+#Round X and Y to 2 decimals
+#Rounding X and Y just makes it easier to read
+pres$X<- round(pres$X, 2)
+pres$Y<- round(pres$Y, 2)
+
+#Dates and times
+#Set time zone as America/New York to prevent rounding errors 
+ 
+pres$date <- as.Date(humid$date, format = "%m/%d/%Y",         
+                      tz = "America/New_York") 
+
+ 
+##Split 00h and 12h
+ 
+# Remove rows based on condition
+pres_00 <- pres[pres$UTC_time != 12, ]
+#Reduce dates by one day to adjust for the fact that 0:00h UTC is 19:00 the day before in Ontario time
+pres_00$date <- pres_00$date - 1
+
+# Remove rows based on condition
+pres_12 <-pres[pres$UTC_time != 0, ] 
+#Dates are already correct for UTC_12
+
+# Rename column by index  (dplyr)
+pres_00 <- pres_00 %>%         
+  rename(pres_00 = 3,)  
+pres_12 <- pres_12 %>%        
+  rename(pres_12 = 3,) 
+
+##concatenate X,Y (locations) and dates  
+pres_00$cat <- paste(pres_00$X, pres_00$Y, pres_00$date)  
+pres_12$cat <- paste(pres_12$X, pres_12$Y, pres_12$date)  
+
+#merge by location-dates 
+pressures <- merge(x = pres_00, y = pres_12, by = "cat", all = TRUE)  
+
+#keep columns 
+pressures = subset(pressures, select = c(X.x, Y.x, date.x, pres_00, pres_12, cat ))  
+
+
+#rename columns 
+pressures <- pressures %>%  
+  rename(X = 1, 
+         Y = 2, 
+         date = 3)
+
+
+#write out pressures
+ write.csv(pressures,"//utl.utoronto.ca/Staff/Data/gispc2/My Documents/aportt/2024_03_01_pressures.csv")
+
+
+```
+
+### Check pressure dates
+
+```{r}
+
+#Check that no dates are missing now
+
+#Make a list of the expected dates in the ECCC dataset
+date2 <- as.Date("2017-01-01") 
+
+# defining length of range  
+#1 no leap years in 2017, 2018, 2019
+len2 <- 365*3
+
+# generating range of dates 
+dates2 <- as.Date(seq(date2, by = "day", length.out = len2))
+
+
+#Extract list of dates from UTC_00 temp (constructed to include 2016)
+pressures_dates <- as.Date(unique(pressures$date))
+
+
+#compare lists - what's in the full date sequence (dates2) that's not in temp_00_dates?
+
+missing_dates <- setdiff(dates2, pressures_dates)
+
+missing_dates <- as.Date(missing_dates, origin = "1970-01-01")
+
+print(missing_dates)
+#[1] "2019-12-30" "2019-12-31"
+
+
+#What about the MB_ap dataset? 
+MB_ap_dates <- as.Date(unique(MB_ap$date))
+
+MB_ap_weather <- setdiff(pressures_dates, MB_ap_dates)
+MB_ap_weather
+
+#Good, the MB_ap and the pressure datasets have the exact same set of unique dates. 
+```
+
+# Merging weather variables
+
+Read in temp, humidity, pressure
+
+```{r}
+#| print = false
+#| echo = false
+
+#Using the tilda helps  setwd("~/aportt/ECCC_weather/Extraction")  
+temps <- read.csv("~/aportt/Master data copies/2024_03_01_temperatures.csv")
+humidities <-read.csv("~/aportt/Master data copies/2024_03_01_humidities.csv")
+pressures <-read.csv("~/aportt/Master data copies/2024_03_01_pressures.csv")
+
+
+```
+
+Merge by concatenated XYlocation-time
+
+```{r}
+#| print = false
+#| echo = false
+
+#drop first column of each weather dataset
+temps <- temps[-1]
+humidities <- humidities[-1]
+pressures <- pressures[-1]
+
+#merge temp&humidity
+temp_humid <- merge(x = temps, y = humidities, by = "cat", all = TRUE)  
+
+#merge temp&humidity to pressure
+weather <- merge(x = temp_humid, y= pressures, by = "cat", all = TRUE)
+
+#keep columns 
+weather <- subset(weather, select = c(X, Y, date, temp_00, temp_12, humid_00, humid_12, pres_00, pres_12, cat))
+
+#write out weather
+ write.csv(weather,"/~/2024_03_01_weather.csv")
+
+```
+
+# Preparing weather variables
+
+```{r}
+#| echo: false 
+#| print: false
+
+#Read in weather
+
+#Home
+weather <- read.csv("~/2024_03_01_weather.csv")
+
+```
+
+Calculate change in barometric pressure.
+
+### vars_Pressure
+
+```{r}
+#| echo: false 
+#| print: false
+
+#Concatenate XY locations
+
+weather$cat_location <- paste(weather$X, weather$Y)
+
+
+#new empty columns
+weather["pres_max"] <- NA
+weather["pres_min"] <- NA
+#Make two new empty columns for yesterday's pressure at 00 UTCH and 24 hour change from 00h to 00h 
+weather['yesterday_00_pres'] <- NA
+weather['pres_change_24h'] <- NA
+
+
+library(dplyr)
+weather <- weather %>% 
+        relocate(pres_max, .after = pres_12)
+
+weather <- weather %>% 
+        relocate(pres_min, .after = pres_12)
+
+weather <- weather %>% 
+        relocate(yesterday_00_pres, .after = pres_12)
+
+weather <- weather %>% 
+        relocate(pres_change_24h, .after = pres_12)
+
+#pick max pressure for each row
+#Takes about 30 minutes to loop through 991,236 rows
+data <- weather
+for (row in 1:nrow(data))
+                {  
+               data$pres_max[row]<- max(data$pres_00[row], data$pres_12[row]) 
+                }
+weather <- data
+
+#Min pressure
+#pick min pressure for each row
+data <- weather
+for (row in 1:nrow(data))
+                {  
+               data$pres_min[row]<- min(data$pres_00[row], data$pres_12[row]) 
+                }
+weather <- data
+
+
+#write out weather
+ write.csv(weather,"~/2024_03_28_weather.csv")
+
+weather <- read.csv("~/2024_03_28_weather.csv")
+
+#Change in pressure
+#Fill yesterday's 00h pressure from the row above
+#Skip the first date in each location by running the loop only if it's not the first date. 
+#Because we don't want to use the previous location's data for the first pressure change at the new location
+#That will be fine because dates start Dec 31 2015 and my time series starts in 2017
+#Calculate using UTC 00h (around 7 AM in Ontario) because it will be less influenced by the heat of the day
+
+#tidy up by dropping artifact columns in weather
+weather <- subset( weather, select = -c(X.2, X.1))
+
+#Sort data by location and date
+weather <- weather %>% arrange(cat_location, date)
+
+
+```
+
+```{r}
+
+#fill yesterday's pressure from the row above
+
+data <- weather
+for (row in 2:nrow(data))
+  {
+                if(data$date[row] != "2015-12-31" & 
+                  data$date[row] != "2016-01-01" )
+                {  
+               data$yesterday_00_pres[row] <- data$pres_00[row-1] #yesterday = pressure from 00h row above
+              }
+  }
+weather <- data
+
+#subtract yesterday's from today's to find the 24h change in pressure
+
+data <- weather
+for (row in 2:nrow(data))
+            {
+                if(data$date[row] != "2015-12-31")
+                {  
+               data$pres_change_24h[row]<- (data$pres_00[row] - data$yesterday_00_pres[row]) #Subtract yesterday's pressure from today's 
+                }
+            }
+weather <- data
+
+#Read out and in
+ write.csv(weather,"~/2024_04_19_weather.csv")
+
+weather <- read.csv("~/2024_04_19_weather.csv")
+
+
+
+```
+
+### vars_Temperature
+
+Just making columns for max and min for temperature. Will run with UTC_00h as that most closely represents nighttime temperature and would catch cold snaps and heat waves best.
+
+```{r}
+#| echo: false 
+#| print: false
+
+#new empty columns
+weather["temp_max"] <- NA
+weather["temp_min"] <- NA
+
+
+library(dplyr)
+weather <- weather %>% 
+        relocate(temp_max, .after = temp_12)
+
+weather <- weather %>% 
+        relocate(temp_min, .after = temp_12)
+
+
+#pick max tempsure for each row
+#Takes about 30 minutes to loop through 991,236 rows
+data <- weather
+for (row in 1:nrow(data))
+                {  
+               data$temp_max[row]<- max(data$temp_00[row], data$temp_12[row]) 
+                }
+weather <- data
+
+#Min tempsure
+#pick min tempsure for each row
+data <- weather
+for (row in 1:nrow(data))
+                {  
+               data$temp_min[row]<- min(data$temp_00[row], data$temp_12[row]) 
+                }
+weather <- data
+
+#Read out and in
+ write.csv(weather,"/~/Master data copies/2024_04_19b_weather.csv")
+
+weather <- read.csv("~/Master data copies/2024_04_19b_weather.csv")
+
+
+
+```
+
+### vars_Humidity
+
+```{r}
+#| echo: false 
+#| print: false
+
+
+#new empty columns
+weather["humid_max"] <- NA
+weather["humid_min"] <- NA
+
+
+library(dplyr)
+weather <- weather %>% 
+        relocate(humid_max, .after = humid_12)
+
+weather <- weather %>% 
+        relocate(humid_min, .after = humid_12)
+
+
+#pick max humidsure for each row
+#Takes about 30 minutes to loop through 991,236 rows
+data <- weather
+for (row in 1:nrow(data))
+                {  
+               data$humid_max[row]<- max(data$humid_00[row], data$humid_12[row]) 
+                }
+weather <- data
+
+#Min humidsure
+#pick min humidsure for each row
+data <- weather
+for (row in 1:nrow(data))
+                {  
+               data$humid_min[row]<- min(data$humid_00[row], data$humid_12[row]) 
+                }
+weather <- data
+
+#Read out and in
+ write.csv(weather,"~/Master data copies/2024_04_22_weather.csv")
+
+weather <- read.csv("~/Master data copies/2024_04_22_weather.csv")
+
+
+```
+
+## More missing weather data
+
+Investigating missing weather data - second set of missing data:
+
+```{r}
+
+####Challenge #1: last 158 rows (at least) have lots of missing data at location -95.2 49.7 ####
+
+#How important is -95.2 49.7? Rather, 49.7 -95.2 in MB_ap
+
+#Look at MB_ap data:
+#Was getting an error because of NA values in the first row.
+#So I cut out the first row, which isn't needed for my time series
+
+#This runs so rows 2 - 90,000 aren't a problem
+weather_900k <- weather[2:90000,]
+
+#This runs so 2 - 990,000 are okay
+weather_test <- weather[90000:990000,]
+
+
+#Problem is within 990,000 - 991,235
+#At least part of problem is in the last 158 rows
+
+
+#Concatenate latitude and longitude in the merged air pollution and migraine dataset
+
+MB_ap$lat_long <- paste(MB_ap$latitude, MB_ap$longitude)
+
+MB_ap <- MB_ap %>% 
+
+        relocate(lat_long, .after = longitude)
+
+#And lat-long-date
+
+MB_ap$lat_long_date <- paste(MB_ap$lat_long, MB_ap$date)
+
+MB_ap <- MB_ap %>% 
+
+        relocate(lat_long_date, .after = lat_long)
+
+MB_ap_missing_weather <- MB_ap[MB_ap$lat_long == "49.7 -95.2",]
+
+MB_ap_missing_weather2 <- MB_ap[MB_ap$ap_POSTALC.x == "P0X1E0",]
+
+#-95.2 49.7 / P0X 1E0 is the postal code of the small set of records that geolocated to just across the Ontario-Manitoba border. We can safely remove this. See code chunk below. 
+
+
+### Challenge #2: 2019-12-31 is missing 00h and all of temp ####
+
+#Looking at the 2019-12-31 challenge
+
+test3 <- weather[weather$cat == "-80.5 43.2 2019-12-31",]
+test4 <- weather[weather$cat_location == "NA NA",]
+
+#Did I lose the 2019-12-31 data in the step just above?
+test5 <- weather4[weather4$cat_location == "NA NA",]
+
+test6 <- weather4[weather4$date == "2019-12-31",]
+
+#why do I have data for humidity and pressure on 2019-12-31 that weren't in the original data read-in? 
+#Check to make sure values haven't been shifted by confirming values for 2019-12-30 at one location (Also checked 2016-01-01)
+#Good. Weather values for the first and last dates at the first location -74.5 45 match what I read in as temps, pressures, and humidities at line 519
+#temps and humidities don't actually have values for that date anyway
+
+
+#Wait, not every 2019-12-30 is missing data!
+#Are these repeats? 
+
+#Let's find out how many rows have 2019-12-30 and 2019-12-29
+Oct_2 <- weather[weather$date == "2019-10-02",] #1355 rows
+Dec_29 <- weather[weather$date == "2019-12-29",] #1355 rows
+N_A <- weather[weather$date == "NA",] #678 rows - these are actually the same rows as Dec_31! Not sure why they are coming up as 2019-12-31
+Dec_31 <- weather[weather$date == "2019-12-31",] #678rows
+
+#Oct 2nd and Dec 29 2019 dates have 1355 rows
+#But Dec 31st has only 678 rows
+#So there is missing data for Dec 31st 2019
+#Remove Dec 31st 2019 - truncates time series by one day. See code chunk below. 
+
+
+```
+
+```{r}
+  
+#Challenge #1 solution
+#There is missing data (see code chunk above) at P0X 1E0 / "49.7 -95.2" starting at the end of 2017
+P0X <- weather[weather$cat_location == "-95.2 49.7",]
+
+#It includes only a small number of migraine records.(see code chunk above)
+#Remove it
+#This removes 1,461 rows, which is the number of days from 2015-12-31 to 2019-21-31 (carrying extra days in 2015 for now. Trim just before merge.)
+#Now 989774 rows
+weather <- weather[weather$cat_location != "-95.2 49.7",]
+
+# Challenge #2: solution
+#Remove columns that have NA NA as cat_location
+#989096 rows (678 fewer, which was the number of rows with NA for date and 2019-12-31 in $cat)
+weather <- weather[weather$cat_location != "NA NA",]
+
+```
+
+#Urban vs Rural
+
+StatsCan Census Metropolitan Area and Census Agglomeration delineation, downlaoded year = 2021 https://mdl.library.utoronto.ca/collections/numeric-data/census-canada/2021/geospatial-data-and-maps https://www12.statcan.gc.ca/census-recensement/2021/geo/sip-pis/boundary-limites/index2021-eng.cfm?year=21
+
+CMAtype: A one-character field identifying whether the unit is a census metropolitan area, a tracted census agglomeration or a non-tracted census agglomeration. https://www150.statcan.gc.ca/n1/pub/92-160-g/2011002/tbl/tbl4.5-eng.htm
+
+CMAtype: B = census metropolitan area (100,000+); D & K = census agglomeration (10,000+) https://www150.statcan.gc.ca/n1/pub/92-151-g/2011001/tech-eng.htm Sault Ste Marie and Kenora are included in D & K designation.
+
+Census agglomerations have a minimum of 10,000 people, whereas census metropolitan areas have at least 100,000: https://library.carleton.ca/guides/help/census-canada-choosing-census-geography
+
+Joins and relates: Match option: Within
+
+Will import merged mb_latlong & CMAtype
+
+mb_latlong_CMAtype.csv (master data copies)
+
+```{r}
+#| echo: false 
+#| print: false
+
+CMAtype <- read.csv("~/Master data copies/mb_latlong_CMAtype.csv")
+
+#Select columns to keep 
+
+library(tidyverse)
+
+CMAtype <-CMAtype %>% 
+       select (c(latitude, longitude, mb_postalcodes,CMANAME,CMATYPE))
+
+
+#Create linking column for weather and urban vs rural by concatenating/pasting lat long
+CMAtype$cat_location <- paste(CMAtype$longitude, CMAtype$latitude)
+
+#Make  column indicate Census Metropolitan areas
+#If CMAtype = B, CMA = 1
+# with mutate
+CMAtype <- CMAtype %>% 
+         mutate (CMA = ifelse((CMATYPE == "B"), 1,0))
+
+
+
+#Make a column to indicate CMA or or agglomeration
+# B = 100,000+
+# D or K = 10,000+
+#CMA_agglom  is 1 if 10,000+, 0 if less than 10,000
+
+CMAtype <- CMAtype %>% 
+         mutate (CMA_agglom = ifelse((CMATYPE == "B" |
+                                 CMATYPE == "D" |
+                                 CMATYPE == "K"), 1,0))
+
+
+#Merge weather and urban vs rural datasets
+weather_CMA <- merge(x = weather, y = CMAtype, by = "cat_location", all.x  = TRUE)
+
+
+#Read out and in
+ write.csv(weather_CMA,"~/2024_04_25_weather_CMA.csv")
+
+weather_CMA <- read.csv("~/2024_04_25_weather_CMA.csv")
+
+#Jump to chunk
+#"Merge weather to air pollution/migraine dataset"
+#Below merging air pollution and migraine
+
+```
+
+## Trim dates and rename times
+
+Now we can get rid of 2016 because we've used the last date to get the pressure change for Jan 1 2017
+
+```{r}
+#| echo: false 
+#| print: false
+
+#Dates and times
+#Set time zone as America/New York to prevent rounding errors 
+ 
+weather$date <- as.Date(weather$date, format = "%m/%d/%Y",         
+                      tz = "America/New_York")  
+
+#Separate year-month-day w stringr
+install.packages("stringr")
+library(stringr)
+
+weather[c('date_utc', 'start_time')] <- str_split_fixed(weather$StdTime, ' ', n = Inf)
+weather[c('day', 'month', "year")] <- str_split_fixed(weather$date_utc, '/', n = Inf)
+
+
+
+#Remove year-month-day columns
+install.packages("tidyverse")
+library(tidyverse)
+
+weather <-weather %>% 
+       select (-c(Dimensions, year, month, day))
+
+#Remove 2016
+weather <- weather[weather$year !=  "2016", ]
+
+#Remove date that isn't in the air pollution dataset
+weather <-weather[weather$date != "12/31/2019",]
+
+#Already moved date back by 1 day for 0:00h UTC because it is 19:00 the day before in Ontario
+#Now rename those columns to 19h00_EST
+#And rename the 12h00_UTC columns to 07h00_EST
+
+```
+
+# MB data
+
+```{r}
+#| print = false
+#| echo = false
+
+
+#Home
+MB_ap <- read.csv("~/2024_02_13_MB_ap.csv")
+
+```
+
+### Merge air pollution migraine
+
+Air pollution and migraine dataset should be most up to date, with onset events.
+
+```{r}
+#| echo: false
+
+# Left join keeps just the MB data and drops empty rows of air pollution data that don't overlap with any participants' location-days. 
+#https://r-coder.com/merge-r/
+#https://www.geeksforgeeks.org/how-to-merge-dataframes-in-r/?ref=ml_lbp
+
+#Left join to keep all MB data and drop extra air pollution data
+
+#Starting with 11,175,210 rows in MB_single_expanded
+#And get out the same number of rows, good. 
+MB_ap <- merge(x = MB_single_expanded, y = ap, by = "postal_cat", all.x  = TRUE)
+
+save.image()
+
+#Arrange back into time series
+
+MB_ap <- MB_ap %>% 
+        arrange(random_uid, date.x)
+
+#Stop and check
+#Compare one (complicated) person's merge with air pollutiond data
+#Looks good
+
+Mover_A <- MB_ap[MB_ap$random_uid ==                        'redacted',]
+
+Mover_ap <- subset(ap, ap_POSTALC == "L0G1R0")
+Mover_ap <- subset(ap, ap_POSTALC == "N1C0A1")
+
+#And then drop unneeded columns
+
+MB_ap <- MB_ap %>% 
+        select (-c(postal_cat, ID2, date.y, PCODE, 
+                   ap_POSTALC.y, ID2_1, date_utc, 
+                   start_time, date_local))
+
+#Rename date
+MB_ap <- MB_ap %>% 
+        rename(date = date.x,)
+
+save.image()
+```
+
+#Merge weather to air pollution/migraine dataset
+
+In this section I will create columns of concatenated latitude-longitude-date in both the MB dataset and the humidity dataset.
+
+I will then use the concatenated columns to merge the two.
+
+Here is a template from merging pollution and migraine:
+
+#### Concatenate dates and postal code as prep for joining MB and air pollution
+
+```{r}
+#| echo: false
+#| print: false
+
+
+MB_ap <- read.csv("~/2024_02_13_MB_ap.csv")
+
+#Make columns to merge
+MB_ap$lat_long_date <- paste(MB_ap$latitude, MB_ap$longitude, MB_ap$date)
+
+weather_CMA$lat_long_date <- paste(weather_CMA$latitude, weather_CMA$longitude, weather_CMA$date)
+
+
+#Merge weather and urban vs rural datasets
+MB_ap_weather <- merge(x = MB_ap, y = weather_CMA, by = "lat_long_date", all.x  = TRUE)
+
+
+#write out 
+ write.csv(MB_ap_weather,"~/2024_04_25_mb_ap.csv")
+ 
+  write.csv(ap,"~/2024_04_25_mb_ap.csv")
+
+#read in
+
+  MB <- read.csv("~/2024_04_25_mb_ap.csv")
+
+MB <- read.csv("~/2024_04_25_mb_ap.csv")
+```
+
+# Stop and Check
+
+```{r}
+
+#Did weather data get properly linked to migraine data? 
+library(readr)
+X2024_03_01_weather <- read_csv("/~/2024_03_01_weather.csv")
+
+MB_check <- MB[MB$cat == "-79.6 43.5 2018-09-02",]
+
+weather_check <- X2024_03_01_weather[X2024_03_01_weather$cat == "-79.6 43.5 2018-09-02",]
+
+#Yes, checked two location-date sets and they look correct
+
+
+```

@@ -1,0 +1,723 @@
+---
+title: "5d Case Time Series"
+author: "Andrea Portt"
+format: html
+editor: visual
+bibliography: references.bib
+---
+
+# Packages & data
+
+```{r packages, message=FALSE}
+library(dlnm) ; library(gnm) ; library(data.table) ; library(splines)
+library(dplyr); 
+library("stringr"); 
+library(tidyr); library(ggplot2)
+library(graphics)
+
+```
+
+```{r}
+#| output: false 
+
+#MB_mx dataset
+#participants who recorded at least one migraine mx_onset
+MB_mx <- read.csv("~/2024_12_06_MB_mx.csv")
+
+```
+
+# Case Times Series
+
+In this .qmd, I run the CTS models and plot the output.
+
+# Seasonal trends
+
+```{r}
+
+#Set the shared seasonal trend with 8 knots per year, btrend:
+#dftrend 
+data$date <- as.Date(data$date)
+dftrend <- round(as.numeric(diff(range(data$date))/365.25*8))
+btrend <- ns(data$date, knots=equalknots(data$date, dftrend-1))
+
+#Now set stratum column - concatenates id, year, month
+#For individual deviations from btrend
+data$stratum <- with(data, factor(paste(random_uid, year, month, sep="-")))
+
+```
+
+# crossbases
+
+```{r}
+
+#cross basis for temp_12
+# linear
+cbtemp_12 <- crossbasis(data$temp_12,lag=3,
+  arglag=list(knots=1), group=data$random_uid)
+
+#Barometric pressure change
+#Knots at 25%, 50%, 75%
+cbpres_change_24h <- crossbasis(data$pres_change_24h, lag=3, argvar=list(knots=c(-480.23440,   -10.60156,   460.54690 )),
+  arglag=list(knots=2), group=data$random_uid) 
+
+#No2
+# linear NO2 variable - lowest AIC 
+cbno2 <- crossbasis(data$no2, lag=3, 
+  arglag=list(knots=1), group=data$random_uid)
+
+# O3
+ #linear- lowest AIC
+cbo3 <- crossbasis(data$o3, lag=3, 
+  arglag=list(knots=1), group=data$random_uid)
+
+#PM2.5
+# Linear- lowest AIC
+cbpm25 <- crossbasis(data$pm25, lag=3, 
+  arglag=list(knots=1), group=data$random_uid)
+
+```
+
+# Multipollutant model
+
+```{r model}
+#mx_onset ~  
+mod_2 <- gnm(mx_onset ~ cbtemp_12 + cbpres_change_24h + 
+              cbno2 + cbo3 + cbpm25 +
+                 btrend + dow + holiday, 
+              eliminate=stratum, data=data,
+                family=binomial)
+
+#summary(mod_2) #Call summary for more details including AIC
+#AIC including pressure change:  86380
+#AIC without pressure change: 86381
+
+```
+
+# Single pollutant models
+
+```{r model}
+#mx_onset ~ no2 & weather & time 
+mod_2 <- gnm(mx_onset ~ cbtemp_12 + cbpres_change_24h + 
+              cbno2 + 
+                 btrend + dow + holiday, 
+              eliminate=stratum, data=data,
+                family=binomial)
+
+#lag0      lag1      lag2      lag3 
+#1.0266182 1.0146615 0.9995284 0.9824496 
+#> cpno2$matRRlow["10", ]
+ #    lag0      lag1      lag2      lag3 
+#1.0096434 1.0019863 0.9884864 0.9662163 
+#> 
+#> cpno2$matRRhigh["10", ]
+ #    lag0      lag1      lag2      lag3 
+#1.0438785 1.0274970 1.0106938 0.9989557 
+
+#mx_onset ~ o3 & weather & time 
+mod_2<- gnm(mx_onset ~ cbtemp_12 + cbpres_change_24h + 
+             cbo3 + 
+                 btrend + dow + holiday, 
+              eliminate=stratum, data=data,
+                family=binomial)
+
+
+
+#> cpo3$matRRfit["10", ]
+
+#> lag0      lag1      lag2      lag3
+#> 0.9947431 1.0296289 1.0193950 0.9797882
+#> cpo3$matRRlow\["10", \] lag0 lag1 lag2 lag3 0.9844608 1.0218337 1.0127540 0.9698454 cpo3
+#> #\$matRRhigh\["10", \] lag0 lag1 lag2 lag3 1.0051329 1.0374836 1.0260794 0.9898329
+
+
+#mx_onset ~ pm25 & weather & time 
+mod_2 <- gnm(mx_onset ~ cbtemp_12 + cbpres_change_24h + 
+               cbpm25 +
+                 btrend + dow + holiday, 
+              eliminate=stratum, data=data,
+                family=binomial)
+
+#lag0 lag1 lag2 lag3 
+#1.0201460 1.0200738 1.0061526 0.9834178 
+#lag0 lag1 lag2 lag3 
+#1.0046240 1.0079149 0.9955467 0.9676586 
+#lag0 lag1 lag2 lag3 
+#1.0359079 1.0323794 1.0168714 0.9994337
+
+
+```
+
+# Crosspredictions
+
+```{r}
+
+#temp crosspredictions
+#Change cen=15 to cen=6 because that's the mean temperature in Ontario (unlike London England)
+#Changing the centre changes the location of the most precise estimates of cumulative effect. 
+
+#Model with pollutants and pressure
+cptemp <- crosspred(cbtemp_12, mod_2, cen=6.13, by=5)
+
+
+#pressure change 
+#Centred at 0 assuming that the body adapts copes more easily with stable pressure
+cppres_change <- crosspred(cbpres_change_24h, mod_2, cen=0, by=200)
+
+#NO2 crosspredictions
+#Centred around 0 based on the assumption that there is no healthy level of this pollutant
+cpno2 <- crosspred(cbno2, mod_2, cen=0, by=2)
+
+#O3 crosspredictions
+#Centred around 0 based on the assumption that there is no healthy level of this pollutant
+cpo3 <- crosspred(cbo3, mod_2, cen=0, by=2)
+
+
+#PM25 crosspredictions
+#Centred around 0 based on the assumption that there is no healthy level of this pollutant
+cppm25 <- crosspred(cbpm25, mod_2, cen=0, by=2)
+
+```
+
+### Extracting multipollutant point estimates
+
+```{r}
+
+
+# var = 10, so pick the 10th line of RRlow / RRhigh
+
+# Summer Temp
+
+#  lag0      lag1      lag2      lag3 
+#1.0506535 0.9368493 0.9116295 0.9347428 
+ #    lag0      lag1      lag2      lag3 
+#1.0887032 0.9614806 0.9314845 0.9598724 
+ #    lag0      lag1      lag2      lag3 
+#1.1281309 0.9867594 0.9517720 0.9856776
+
+#Winter temp
+
+#    lag0      lag1      lag2      lag3 
+#0.9329191 0.9892980 0.9991950 0.9724197 
+ #    lag0      lag1      lag2      lag3 
+#0.9459884 0.9997198 1.0080751 0.9851952 
+ #    lag0      lag1      lag2      lag3 
+#0.9592407 1.0102513 1.0170342 0.9981384
+
+cptemp$matRRfit["10", ]
+cptemp$matRRlow["10", ]
+cptemp$matRRhigh["10", ]
+
+
+#NO2
+
+cpno2$matRRfit["10", ]
+cpno2$matRRlow["10", ]
+cpno2$matRRhigh["10", ]
+
+#O3
+cpo3$matRRfit["10", ]
+cpo3$matRRlow["10", ]
+cpo3$matRRhigh["10", ]
+
+
+#PM25
+cppm25$matRRfit["10", ]
+cppm25$matRRlow["10", ]
+cppm25$matRRhigh["10", ]
+
+```
+
+# Faceted plots
+
+```{r}
+
+par(mfrow=c(1,2), mar = c(5.1, 4.1, 5.1, 2.1))
+plot(cptemp_winter, var=10, ci="b", type="p", ylab="OR", ylim = c(0.85, 1.2), col="deepskyblue", pch=20, cex=1.7, xaxt="n",
+  xlab="Lag, days", main="Winter temperature")
+axis(1, xaxp=c(0,3,3))
+plot(cptemp_summer, var=10, ci="b", type="p", ylab="OR", ylim = c(0.85, 1.2), col="deepskyblue", pch=20, cex=1.7, xaxt="n",
+  xlab="Lag, days", main="Summer temperature")
+axis(1, xaxp=c(0,3,3))
+plot(cppres_change, xlab="\n 24-hour pressure change, Pascals", ylab = "\n Lag, days", zlab="\n OR", ltheta=240, lphi=60, cex.axis=0.55, ylim=c(0,3),
+  main="Barometric pressure change", col="deepskyblue")
+plot(cpno2, var=10, ci="b", type="p", ylab="OR", ylim = c(0.85, 1.2), col="deepskyblue", pch=20, cex=1.7, xaxt="n",
+  xlab="Lag, days", main="Nitrogen dioxide")
+  axis(1, xaxp=c(0,3,3))
+plot(cpo3, var=10, ci="b", type="p", ylab="OR", ylim = c(0.85, 1.2), col="deepskyblue", pch=20, cex=1.7,
+  xlab="Lag, days", xaxt="n", main="Ozone")
+  axis(1, xaxp=c(0,3,3))
+plot(cppm25, var=10, ci="b", type="p", ylab="OR", ylim = c(0.85, 1.2), col="deepskyblue", pch=20, cex=1.7, xaxt="n",
+  xlab="Lag, days", main=expression(~bold("PM"[2.5])))
+  axis(1, xaxp=c(0,3,3))
+
+
+```
+
+# Temperature
+
+## Range
+
+```{r}
+
+#histogram
+a <- ggplot(data, aes(temp_12))+
+    geom_histogram()
+a
+
+#IQR
+#16.92
+IQR(data$temp_12, na.rm = TRUE)
+
+#Quantiles
+quantile(data$temp_12, na.rm = TRUE)
+#   0%    25%    50%    75%   100% 
+#-38.83  -1.18   6.13  15.74  29.12 
+
+#Summer Quantiles
+quantile(summer$temp_12, na.rm = TRUE)
+# 0%   25%   50%   75%  100% 
+# 0.44 15.86 18.30 20.61 29.12
+ 
+ #Winter quantiles
+ quantile(winter$temp_12, na.rm = TRUE)
+#   0%    25%    50%    75%   100% 
+# -38.83  -9.52  -3.49   0.67  13.81 
+   
+quantile(data$temp_12, probs = c(0.1, 0.5, 0.9), na.rm = TRUE)
+#  10%   50%   90% 
+#-8.07  6.13 19.84 
+
+quantile(data$temp_12, probs = c(0.33, 0.66), na.rm = TRUE)
+# 1.10 12.64 
+
+#Mean
+mean(data$temp_12, na.rm = TRUE)
+# 6.233147
+
+```
+
+## plot
+
+```{r plottmean, out.width='100%', fig.dim=c(10,4), echo=-c(1,3,5,6)}
+layout(t(1:2))
+plot(cptemp, "overall", xlab="Temperature", ylab="OR", col=3,
+  main="Temperature: overall cumulative exposure-response", ylim=c(0.5,3))
+par(mar=c(1,1,2,1))
+plot(cptemp, xlab="Temperature", zlab="OR", ltheta=240, lphi=60, cex.axis=0.8, 
+  main="Temperature: \n exposure-lag-response", col=3)
+layout(1)
+par(mar=c(5,4,4,1)+0.1)
+```
+
+```{r}
+
+dev.print(pdf, file="figures/fig4.pdf", width=7, height=4)
+
+```
+
+## Seasonal subsets
+
+Subset dataset so that I have separate winter (Dec-Jan-Feb) and summer (June-July-August) sets.
+
+Since our sample is spread across a wide range of latitudes, from max(lat) to min(lat), with some areas further impacted by lake effect, I dropped shoulder seasons.
+
+### Winter
+
+```{r}
+
+#Winter
+winter <- data %>%
+  filter(month==12 |
+        month== 1|
+        month == 2)
+
+#Set the shared seasonal trend with 8 knots per year, btrend:
+#dftrend 
+winter$date <- as.Date(winter$date)
+dftrend_winter <- round(as.numeric(diff(range(winter$date))/365.25*8))
+btrend_winter <- ns(winter$date, knots=equalknots(winter$date, dftrend_winter-1))
+
+#Now set stratum column - concatenates id, year, month
+#For individual deviations from btrend
+winter$stratum <- with(winter, factor(paste(random_uid, year, month, sep="-")))
+
+#cross basis for temp_12
+cbtemp_12_winter <- crossbasis(winter$temp_12,lag=3,
+  arglag=list(knots=1), group=winter$random_uid)
+
+#Barometric pressure change
+cbpres_change_24h_winter <- crossbasis(winter$pres_change_24h, lag=3, argvar=list(knots=c(-480.23440,   -10.60156,   460.54690 )),
+  arglag=list(knots=2), group=winter$random_uid) 
+
+
+# No knots for NO2 variable - lowest AIC 
+cbno2_winter <- crossbasis(winter$no2, lag=3, 
+  arglag=list(knots=1), group=winter$random_uid)
+
+# O3
+cbo3_winter <- crossbasis(winter$o3, lag=3, 
+  arglag=list(knots=1), group=winter$random_uid)
+
+
+# PM2.5
+cbpm25_winter <- crossbasis(winter$pm25, lag=3, 
+  arglag=list(knots=1), group=winter$random_uid)
+
+
+#mx_onset ~ 
+#Same as mod_2, just needs a different name for winter subset
+mod_winter <- gnm(mx_onset ~ cbtemp_12_winter + cbpres_change_24h_winter + 
+              cbno2_winter + cbo3_winter + cbpm25_winter +
+                 btrend_winter + dow + holiday, 
+              eliminate=stratum, data=winter,
+                family=binomial)
+
+#Cross prediction
+#Keeping same centre because I'm assuming that the annual average temp is what's important
+cptemp_winter <- crosspred(cbtemp_12_winter, mod_winter, cen=6.13, by=5)
+
+#Winter temp plot
+plot(cptemp_winter, var=10, ci="b", type="p", ylab="OR", ylim = c(0.85, 1.2), col="deepskyblue", pch=20, cex=1.7, xaxt="n",
+  xlab="Lag, days", main="Winter temperature: lag-response")
+axis(1, xaxp=c(0,3,3))
+
+```
+
+#### overall/cumulative winter temperatures
+
+```{r}
+par(mfrow=c(1,2), mar = c(5.1, 4.1, 5.1, 2.1))
+plot(cptemp_winter, var=10, "overall", xlab="Winter temperature, °C ", ylab="OR", col=4, main="Winter temperature: \n overall cumulative \n exposure-response", ylim=c(0.85,1.30))
+plot(cptemp_winter, var=10, ci="b", type="p", ylab="OR", ylim = c(0.85, 1.2), col="deepskyblue", pch=20, cex=1.7, xaxt="n",
+  xlab="Lag, days", main="Winter temperature: lag-response")
+axis(1, xaxp=c(0,3,3))
+
+
+```
+
+### Summer
+
+```{r}
+
+#Summer
+summer <- data %>%
+  filter(month==6 |
+        month== 7|
+        month == 8)
+
+#Set the shared seasonal trend with 8 knots per year, btrend:
+#dftrend 
+summer$date <- as.Date(summer$date)
+dftrend_summer <- round(as.numeric(diff(range(summer$date))/365.25*8))
+btrend_summer <- ns(summer$date, knots=equalknots(summer$date, dftrend_summer-1))
+
+#Now set stratum column - concatenates id, year, month
+#For individual deviations from btrend
+summer$stratum <- with(summer, factor(paste(random_uid, year, month, sep="-")))
+
+#cross basis for temp_12
+cbtemp_12_summer <- crossbasis(summer$temp_12,lag=3,
+  arglag=list(knots=1), group=summer$random_uid)
+
+#Barometric pressure change
+cbpres_change_24h_summer <- crossbasis(summer$pres_change_24h, lag=3, argvar=list(knots=c(-480.23440,   -10.60156,   460.54690 )),
+  arglag=list(knots=2), group=summer$random_uid) 
+
+
+# No knots for NO2 variable - lowest AIC 
+cbno2_summer <- crossbasis(summer$no2, lag=3, 
+  arglag=list(knots=1), group=summer$random_uid)
+
+# O3
+cbo3_summer <- crossbasis(summer$o3, lag=3, 
+  arglag=list(knots=1), group=summer$random_uid)
+
+
+# PM2.5
+cbpm25_summer <- crossbasis(summer$pm25, lag=3, 
+  arglag=list(knots=1), group=summer$random_uid)
+
+
+#mx_onset ~
+#Same as mod_2 just needs a different name for summer subset
+mod_summer <- gnm(mx_onset ~ cbtemp_12_summer + cbpres_change_24h_summer + 
+              cbno2_summer + cbo3_summer + cbpm25_summer +
+                 btrend_summer + dow + holiday, 
+              eliminate=stratum, data=summer,
+                family=binomial)
+
+#Cross prediction
+#Keeping same centre because I'm assuming that the annual average temp is what's important
+cptemp_summer <- crosspred(cbtemp_12_summer, mod_summer, cen=6.13, by=5)
+
+#summer temp plot
+plot(cptemp_summer, var=10, ci="b", type="p", ylab="OR", ylim = c(0.85, 1.2), col="deepskyblue", pch=20, cex=1.7, xaxt="n",
+  xlab="Lag, days", main="summer temperature: lag-response")
+axis(1, xaxp=c(0,3,3))
+
+```
+
+#### overall/cumulative summer temperatures
+
+```{r}
+par(mfrow=c(1,2), mar = c(5.1, 4.1, 5.1, 2.1))
+plot(cptemp_summer, var=10, "overall", xlab="Summer temperature, °C ", ylab="OR", col=4, main="Summer temperature: \n overall cumulative \n exposure-response", ylim=c(0.85,1.30))
+plot(cptemp_summer, var=10, ci="b", type="p", ylab="OR", ylim = c(0.85, 1.2), col="deepskyblue", pch=20, cex=1.7, xaxt="n",
+  xlab="Lag, days", main="Summer temperature: \n lag-response")
+axis(1, xaxp=c(0,3,3))
+
+
+```
+
+# Pressure change
+
+AIC including pressure change is very slightly lower than AIC including absolute pressure (Pascals).
+
+AIC of models including temp and NO2, PM2.5, SO2 with pressure change: 86380 AIC without pressure change: 86381
+
+:. including pressure change makes almost no difference to the parsimony of the model.
+
+But, it is important to learn about barometric pressure in the context of migraine and to control for pressure change as a potential confounder of air pollution exposures.
+
+## range
+
+```{r}
+
+#histograms
+b <- ggplot(data, aes(pres_change_24h))+
+    geom_histogram()
+b
+
+#IQR
+IQR(data$pres_change_24h, na.rm = TRUE)
+
+#Quantiles
+quantile(data$pres_change_24h, na.rm = TRUE)
+#   0%            25%           50%        75%       100% 
+# -4617.84400  -480.23440   -10.60156   460.54690  4704.10200
+
+#pressure changes in ranges associated with migraine onset are rare: 
+ quantile(data$pres_change_24h, probs = c(0.01, 0.999), na.rm = TRUE)
+#       1%     99.9% 
+#-2060.297  3120.102 
+
+
+quantile(data$pres_change_24h, probs = c(0.1, 0.5, 0.9), na.rm = TRUE)
+#  10%        50%       90% 
+# -969.75780  -10.60156  989.36720
+
+# 2 equal knots
+quantile(data$pres_change_24h, probs = c(0.33, 0.66), na.rm = TRUE)
+#    33%       66% 
+# -296.3984  284.0312 
+
+
+#4 equal knots
+quantile(data$pres_change_24h, probs = c(0.2, 0.4, 0.6, 0.8), na.rm = TRUE)
+#      20%       40%       60%       80% 
+# -602.1719 -176.2031  173.6328  594.8828 
+
+#Mean
+mean(data$pres_change_24h, na.rm = TRUE)
+# 0.1198172
+
+```
+
+## overall/cumulative
+
+```{r}
+par(mfrow=c(1,2), mar = c(5.1, 4.1, 5.1, 2.1))
+plot(cppres_change, var=10, "overall", xlab="24-hour pressure change, Pascals", ylab="OR", col=4, main="24-hour pressure change: \n overall cumulative \n exposure-response", ylim=c(0.85,1.30))
+plot(cppres_change, xlab="\n 24-hour pressure change, Pascals", ylab = "\n Lag", zlab="\n OR", ltheta=240, lphi=60, cex.axis=0.55, ylim=c(0,3),
+  main="Barometric pressure change: \n lag-response", col="deepskyblue")
+
+```
+
+# NO2
+
+The recommended max in WHO Air Quality Guidelines for NO2 is 25 ug/m3
+
+[@worldhealthorganization2021]
+
+## Range
+
+```{r}
+
+#histogram
+a <- ggplot(data, aes(no2))+
+    geom_histogram()
+a
+
+#IQR
+# 7.3774
+IQR(data$no2, na.rm = TRUE)
+
+#Quantiles
+quantile(data$no2, na.rm = TRUE)
+#   0%     25%     50%     75%    100% 
+ #0.0092  2.5047  5.2344  9.8821 60.3680 
+
+#For 4 equal knots
+quantile(data$no2, probs = c(0.2, 0.4, 0.6, 0.8), na.rm = TRUE)
+#  20%     40%     60%     80% 
+# 2.0766  4.0082  6.7364 11.3327 
+
+#For 2 equal knots
+quantile(data$no2, probs = c(0.33, 0.66), na.rm = TRUE)
+#   33%    66% 
+# 3.2613 7.8515
+
+#Mean 
+# 7.187678
+mean(data$no2, na.rm = TRUE)
+
+```
+
+## overall/cumulative
+
+```{r}
+par(mfrow=c(1,2), mar = c(5.1, 4.1, 5.1, 2.1))
+plot(cpno2, var=10, "overall", xlab="Nitrogen dioxide, ppb", ylab="OR", col=4, main="Nitrogen dioxide: \n overall cumulative \n exposure-response", ylim=c(0.85,1.30))
+
+plot(cpno2, var=10, ci="b", type="p", ylab="OR", col=4, pch=20, cex=1.7, xlab="Lag", main="Nitrogen dioxide: lag-response", lab=c(3,5,7), ylim=c(0.85,1.2))
+
+```
+
+# O3
+
+WHO Air Quality Guideline Level for max 8-hour mean O3 is 100 ug/m3 check units
+
+[@worldhealthorganization2021]
+
+## range
+
+```{r}
+#histograms
+# clustered at at or near zero
+b <- ggplot(data, aes(o3))+
+    geom_histogram()
+b
+
+#IQR
+# 12.71
+IQR(data$o3, na.rm = TRUE)
+
+#Quantiles
+quantile(data$o3, na.rm = TRUE)
+#   0%   25%    50%   75%     100% 
+# 0.77  21.34  27.60  34.05 103.13 
+
+#For 2 equal knots
+quantile(data$o3, probs = c(0.33, 0.66), na.rm = TRUE)
+#   33%    66% 
+#23.43 31.60 
+
+quantile(data$o3, probs = c(0.1, 0.5, 0.9), na.rm = TRUE)
+#  10%        50%       90%
+# 16.21      27.60     39.86
+
+#For 4 equal knots
+quantile(data$o3, probs = c(0.2, 0.4, 0.6, 0.8), na.rm = TRUE)
+#  20%     40%     60%     80% 
+# 19.90 25.17 30.08 35.62
+
+mean(MB_mx_immobile$o3)
+#28.04966
+
+
+```
+
+## overall/cumulative
+
+```{r}
+par(mfrow=c(1,2), mar = c(5.1, 4.1, 5.1, 2.1))
+plot(cpo3, var=10, "overall", xlab="Ozone, ppb", ylab="OR", col=4, main="Ozone: \n overall cumulative \n exposure-response", ylim=c(0.85,1.30))
+
+plot(cpo3, var=10, ci="b", type="p", ylab="OR", col=4, pch=20, cex=1.7, xlab="Lag", main="Ozone: lag-response", lab=c(3,5,7), ylim=c(0.85,1.2))
+
+```
+
+# PM2.5
+
+## range
+
+WHO Air Quality Guideline Level for 24-hour PM2.5 is 15 ug/m3 [@worldhealthorganization2021]
+
+```{r}
+#histograms
+# clustered at at or near zero
+b <- ggplot(data, aes(pm25))+
+    geom_histogram()
+b
+
+#IQR
+# 7.187
+IQR(data$pm25, na.rm = TRUE)
+
+#Quantiles
+quantile(data$pm25, na.rm = TRUE)
+#   0%     25%   50%     75%       100% 
+#  0.005  2.793  5.571  9.980      68.462
+
+quantile(data$pm25, probs = c(0.1, 0.5, 0.9), na.rm = TRUE)
+#  10%        50%       90%
+# 1.430       5.571    15.522
+
+#For 4 equal knots
+quantile(data$pm25, probs = c(0.2, 0.4, 0.6, 0.8), na.rm = TRUE)
+#  20%     40%     60%     80% 
+ # 2.344  4.332  7.024 11.369
+
+#For 2 equal knots
+quantile(data$pm25, probs = c(0.33, 0.66), na.rm = TRUE)
+#   33%    66% 
+# 3.564 8.035
+
+mean(MB_mx_immobile$pm25)
+#7.344665
+
+```
+
+## overall/cumulative
+
+```{r}
+par(mfrow=c(1,2), mar = c(5.1, 4.1, 5.1, 2.1))
+plot(cppm25, var=10, "overall", xlab=(expression(PM[2.5]~mu~g/m^3)), ylab="OR", col=4, main="PM2.5: \n overall cumulative \n exposure-response", ylim=c(0.85,1.30))
+
+plot(cppm25, var=10, ci="b", type="p", ylab="OR", col=4, pch=20, cex=1.7, xlab="Lag", main="PM2.5: lag-response", lab=c(3,5,7), ylim=c(0.85,1.2))
+
+```
+
+# SO2
+
+## range
+
+WHO Air Quality Guideline Level for 24-hour SO2 is 40 μg/m3 [@worldhealthorganization2021]
+
+95th percentile in these estimates is 6.4 μg/m3
+
+```{r}
+#histograms
+# clustered at at or near zero
+b <- ggplot(data, aes(so2))+
+    geom_histogram()
+b
+
+#IQR
+#1.8102
+IQR(data$so2, na.rm = TRUE)
+
+#Quantiles
+quantile(data$so2, na.rm = TRUE)
+#   0%            25%           50%        75%       100% 
+#  0.0000        0.4807        1.0736    2.2909      111.1779 
+
+quantile(data$so2, probs = c(0.1, 0.5, 0.9), na.rm = TRUE)
+#  10%        50%       90%
+# 0.2129    1.0736    4.3706
+
+quantile(data$so2, probs = c(0.95), na.rm = TRUE)
+#   95% 
+# 6.4489
+
+```

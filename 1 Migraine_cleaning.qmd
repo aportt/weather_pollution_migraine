@@ -1,0 +1,533 @@
+---
+title: "1 Migraine Cleaning"
+author: "Andrea Portt"
+format: html
+editor: visual
+---
+
+## Migraine cleanup
+
+This is a version of the code I used to clean the data from Migraine Buddy to designate migraine attack onsets. Some parts have been redacted to further protect privacy, for example I have removed random uids.
+
+### Read in Migraine data
+
+```{r}
+#| echo: false
+#|print: false
+#Home
+MB_ap <- read.csv("2023_12_13_MB_ap.csv")
+
+```
+
+### Self-reporters
+
+```{r}
+#| echo: false
+#| print: false
+
+install.packages("tidyverse")
+library(tidyverse)
+install.packages("dplyr")
+library(dplyr)
+
+#10,215 users in 2016-2019
+MB_ap_list <- sort(unique(MB_ap$random_uid))
+
+#Make a column of self-reported migraine
+#Within a given random_uid
+# attack_type includes "migraine"
+
+MB_ap <- MB_ap %>% 
+         group_by(random_uid) %>% 
+         mutate (self_report = ifelse(sum(grepl("migraine", attack_type))>=1, 1,0))
+
+
+#Sum adds up 0 and 1 of false and true, 
+#if there's at least 1, return a 1, else 0
+#ifelse(sum(grepl("A", V))>=1, 1,0)
+
+#Count number of people with migraine
+self_reporters <- MB_ap %>% 
+        filter(self_report == 1) %>% 
+         group_by(random_uid)
+
+#7,447 participants who self-reported as having migraine 
+self_reporters_list <- sort(unique(self_reporters$random_uid))
+
+```
+
+### self-report column stop and check
+
+```{r}
+
+#| echo: false
+#| print: false
+
+#Stop and check: 
+
+#Check for NA - no NA values in self-report column
+is_na <- MB_ap %>% 
+        filter(is.na(self_report)) %>% 
+         group_by(random_uid)
+
+
+cluster_participant <- MB_ap[MB_ap$random_uid ==                        'redacted',]
+#Yes, the self-report column is correctly 0 for the participant who only reported having cluster headaches. 
+
+#What about someone who only reported migraine in a string with other letters or symbols? 
+
+migraine_quotes_test <- MB_ap[MB_ap$random_uid ==
+ "redacted",]
+
+migraine_quotes_test <- MB_ap[MB_ap$random_uid ==
+ "redacted",]
+
+#random_uids that have at least one attack_type that's not migraine
+MB_ap_2 <- MB_ap %>% 
+        group_by(random_uid) %>% 
+        filter(attack_type != "migraine") 
+
+```
+
+This website looks handy for setting up migraine events
+
+<https://sscc.wisc.edu/sscc/pubs/dwr/dates.html> \###
+
+## Migraine events
+
+In this section I will identify migraine days (days when participants had a migraine attack ongoing or onset) and onset days (the first day of a given migraine attack).
+
+Need to account for some attacks ending on different days than they started.
+
+Since two migraine events occurring within 48 hours of one another are considered to be the same attack, any single event-free days will be merged with the event that was going on the day before and after.
+
+1.Before first onset - 0
+
+2\. Startdate is not missing - 1
+
+3\. Multiple days - 1
+
+4\. One day off - 1
+
+5\. Everything else that is NA - 0
+
+```{r}
+#| print: false
+#| echo: false
+
+#Make a new empty numeric column indicating a migraine day:
+
+MB_ap['migraine_day'] <- NA
+MB_ap$migraine_day <- as.numeric(as.character(MB_ap$migraine_day))
+
+#print(sapply(MB_ap$migraine_day, class)) 
+
+#Create just dates from starttime_local and end date (keep times for difftime calculation for ER study)
+#start_date already created
+#create end_date
+
+#Separate date from time columns using stringr
+#And make sure both date columns are set to the same time zone
+install.packages("stringr")
+library(stringr)
+
+MB_ap$start_date <- as.Date(MB_ap$start_date, 
+                         tz = "America/New_York")
+
+MB_ap$end_date <- as.Date(MB_ap$endtime_local, 
+                         tz = "America/New_York")
+
+
+#It would be nice to get the start and end date columns side by side,
+MB_ap <- MB_ap %>% relocate(end_date, .after = start_date)
+
+
+#Setting migraine_day to include days between start and end
+#Looping through individuals
+#Replace missing values based on data
+#Extract all non-missing start times and end times
+#Maybe into temporary lists, remove missing values and repeat values
+#Check for how many are there
+#Count number of rows and save as n
+#If a date is between start1 and end1, then no need to check if it's between start2 and end2, exit
+#As soon as you find YES, you replace migraine_day with 1
+#If there's no yes, replace 
+
+#Let's start by working with Mover_A
+#Let's keep looking at Mover A as an example
+Mover_A <- MB_ap[MB_ap$random_uid ==                        'redacted',]
+
+#Sort by random_uid and date
+install.packages("tidyverse")
+library(tidyverse)
+MB_ap <- MB_ap %>% arrange(random_uid, date)
+
+#Identify the first start date in each person's data
+#"first" lists the very first start_date
+MB_ap <- MB_ap %>% 
+        group_by(random_uid) %>% 
+        mutate(first_onset = dplyr::first(na.omit(start_date)))
+        
+#Replace all of the rows above the first_onset days as migraine_day = 0
+#If date is less than first_onset
+#Then migraine_day = 0
+#!!!quos is a function that's used to keep track of the environment
+#Creates an environment that puts the two functions together
+#Sometimes used with case_when
+#Otherwise we would have tried two separate case_when functions
+
+MB_ap <- MB_ap %>% 
+        group_by(random_uid) %>%
+        mutate(migraine_day = case_when
+               (!!!quos(is.na(migraine_day) & date < first_onset ~ 0, 
+                        # 1. Before first onset - 0
+                 !is.na(start_date) ~ 1))) #2. Startdate is not missing - 1
+
+#https://stackoverflow.com/questions/24459752/can-dplyr-package-be-used-for-conditional-mutating
+#https://stackoverflow.com/questions/38649533/case-when-in-mutate-pipe
+
+```
+
+That takes ages to run!
+
+### Write out & read in
+
+```{r}
+
+#Write out 
+write.csv(MB_ap, "~2024_01_25_MB_ap.csv")
+
+#Read it back in for next session  
+
+#Home
+MB_ap <- read.csv("~/2024_01_25_MB_ap.csv")
+
+
+```
+
+### Multiday migraine events loop
+
+```{r}
+
+#Get the number of days difference between start_date and end_date
+#Fill that number of rows below start_date with migraine_day = 1
+
+#When looping over each row
+#1st If statement checks if migraine_day is missing
+#& if end date is greater than start date
+#If those are both true, calc # days end date - start date
+#Try a "while" loop with condition that loop will go on as long as days is greater than 0
+#Inside the loop migraine_day row # + days <- assign a value of 1
+#Assign days minus 1
+
+
+#If row #1 doesn't have start_date in it, then it's not a migraine day
+#So we can start with row #2
+
+#Make a column of the number of days of the event in a given row
+#And use round() to round up (default) to the next whole number
+#Which accounts for when attack happened over the spring ahead or fall back 
+MB_ap$days <- round(difftime( MB_ap$end_date, MB_ap$start_date, 
+                            tz = "America/New_York",
+                            units = c("days")), 0)
+
+#Make a column called final_date 
+#Fill it with Dec 30, 2019
+#make sure event date is in the right time zone too
+
+MB_ap$final_day <- as.Date("30dec2019", "%d%b%Y",  
+                                tz = "America/New_York")
+
+MB_ap$date <- as.Date(MB_ap$date, 
+                           tz = "America/New_York")
+
+
+#Make a column counting down days_to_end of the time series 
+MB_ap$days_to_end <- difftime( MB_ap$final_day, 
+                                    MB_ap$date, 
+                            tz = "America/New_York",
+                            units = c("days"))
+
+
+
+#empty_migraine_day_rows takes the value of (1 - # of days (eg 1 - 3))
+#Fill migraine_day with 1 if there was a multiday attack including that day
+  ##3. Multiple days - 1      
+
+#Take a subset to practice looping over
+MB_ap_3300 <- MB_ap[1:3300,]
+MB_ap_50k <- MB_ap[1:50000,]
+
+
+
+#This for-loop does not need to loop through uids
+#We simply use dates in the dataframe that is arranged by uid and date
+#when there are multiple day events this loop will give migraine_day value = 1
+#For rows that are part of multiday events
+#Stopping at rows that are the last date, Dec 30, 2019
+#Dec 30 2019 is the last day w full pollution and weather data from Greenwich time
+#Runs in half an hour for 11 million rows
+
+data <- MB_ap_3300
+
+data <- MB_ap #set data to be whatever dataset I'm working with
+
+for (row in 1:nrow(data)){
+        if(!is.na(data$days[row]) &  #"days" isn't missing
+           is.na(data$migraine_day[row+1])  &    #There's at least a 1 day gap following the row
+           (data$days[row] > 0) & #Attack lasted at least into next date
+           data$date[row]!= 2019-12-30 ) #This row is not a last date in the time series
+                {  
+                rows_to_be_replaced <- 
+                        min(data$days[row]-1, data$days_to_end[row])#
+                #calculate number of rows to be replaced
+                #Lowest (min) of days VS days_to_end of time series
+                #So the loop doesn't run into the next person's first rows
+                for (empty_migraine_day_rows in 1:rows_to_be_replaced) {
+           #Assign a 1 to the rows until end of event or person's time series
+                data$migraine_day[row + empty_migraine_day_rows] <- 1
+                }
+           row <- row + data$days[row] 
+        }
+
+}
+
+MB_ap <- data #overwrite whatever dataset I'm working with after loop. 
+
+#Look at row 506, 1-day long migraine
+
+#Look for rows with high number of $days
+
+ table(MB_ap$days)
+ 
+ grep("4", MB_ap$days) #returns row numbers with that value 
+ #including row  28244
+ #Check if that event is recorded properly after loop
+ #Yes, the event starting on row 28244 continues for a total of 4 $days
+ 
+
+```
+
+### Springing ahead
+
+```{r}
+
+ #There were $days lengths of non-rounded numbers from when attacks spanned the spring ahead or fall back
+#We adjusted for this above by using round() when calculating days
+
+ grep("0.958333333333333", MB_ap$days) #returns row numbers with that value 
+ 
+ funky_days <- MB_ap[grep("0.958333333333333", MB_ap$days),]
+
+```
+
+### Stop and check multiday migraine events
+
+```{r}
+
+#Make sure this loop will stop at the end of the participant's time series
+#Even if a migraine continued to Dec 31 2019 or beyond
+
+#Make a corrupted MB_ap_3300 in Excel
+#With a long event at the end of the first person's time series
+
+
+#Write out 
+write.csv(MB_ap_3300, "~/2024_01_25_MB_ap_3300_corrupted.csv")
+
+#In Excel, create a 9-day event at the end of the first person's time series
+#By changing $days
+
+#Read corrupted data back in
+#Home
+MB_ap_corrupted <- read.csv("~/2024_01_25_MB_ap_3300_corrupted.csv")
+
+MB_ap_corrupted <- data
+
+#Check the loop
+
+#Excellent
+#The for loop fills in the remaining days in that person's time series
+#Except for the last day (1094), which is fine because the last day only matters if a new migraine *started* then.  
+
+
+```
+
+### Replace gaps
+
+This step replaces any single days without migraine with 1 in migraine_days, because an attack is considered to be ongoing unless there have been 48 hours symptom-free between events.
+
+```{r}
+
+
+#If it's one day "off" of a migraine attack, replace it with 1
+#4. One day off - 1
+
+#I'm leaving the last date as it is, which is to say it's a migraine day if it is a migraine start date
+#If it's the first day without a migraine, the best information I have is that it's not a migraine day. Can't know what the day after the time series would have been. 
+data <- MB_ap
+for (row in 2:nrow(data)){ #starting on second row because first row either is or isn't a migraine day, doesn't depend on unknown status of day before the start
+        if ( is.na(data$migraine_day[row]) & #if it's not a migraine day
+        !is.na(data$migraine_day[row-1]) &  #and the row above isn't missing
+        (data$migraine_day[row-1]==1)& #and the row above is 1
+        !is.na(data$migraine_day[row+1]) & #and the row below isn't missing
+        (data$migraine_day[row+1]==1) & #and the row below is 1       
+        (data$date[row]!= 2019-12-30 )  #and it's not the last date
+             ) {
+                
+             data$migraine_day[row] <- 1   
+        }
+}
+MB_ap <- data
+
+#Then we'll replace everything that's NA with 0
+#5. Everything else that is NA - 0
+#With square brackets is.na(migraine_day) <- 0
+
+MB_ap$migraine_day[is.na(MB_ap$migraine_day)] <- 0
+
+#Let's  count migraine days in the dataset for 
+sum(MB_ap$migraine_day, na.rm = TRUE)
+#223000
+
+
+#Check that there are no NAs in migraine_day column
+#Good there are none
+#en_eh <-subset(MB_ap, MB_ap$migraine_day=="NA")
+
+
+
+```
+
+## Migraine onset days
+
+My outcome of interest is the onset of a migraine, therefore I need to flag the first day of every migraine event, even when it's a multi-day event
+
+```{r}
+
+#Make sure the dataframe is in order of random_uid and date
+MB_ap <- MB_ap %>% arrange(random_uid, date)
+
+#Make a new empty column for migraine_onset
+MB_ap['onset'] <- NA
+
+#Let's keep looking at Mover A as an example
+Mover_A <- MB_ap[MB_ap$random_uid ==                        'redacted',]
+
+#For a given row
+#If it's the first date &
+#If migraine_day is 1
+#We don't know if it's an ongoing migraine or not. 
+#We should ignore the first attack if it's on the start date because we don't know when it started. 
+
+
+#How many people had new or ongoing attacks on the first day?
+#46 participants  
+first_dates <- MB_ap[MB_ap$date == "2017-01-01",]
+sum(first_dates$migraine_day)
+#Leave those as onset = NA for now
+#As long as migraine_day is 1, a new onset won't be triggered
+
+#For rows 2 and beyond, if migraine_day = 1 and the row above = 0, #Then it's an onset 
+data <- MB_ap
+for (row in 2:nrow(data)){ #starting from second date
+        if ( (data$migraine_day[row]==1) & #if it's a migraine day
+        (data$migraine_day[row-1]==0)) #and the row above is 0
+         {
+             data$onset[row] <- 1   #It's an onset day
+        }
+}
+MB_ap <- data
+
+
+#Change anything that's still NA to 0
+
+MB_ap$onset[is.na(MB_ap$onset)] <- 0
+
+#Drop columns that are no longer needed
+MB_ap <-subset(MB_ap, select = -c(X.1, X, first_onset, days, 
+                                  final_day, 
+                                days_to_end))
+```
+
+### Write out & read in
+
+```{r}
+
+#Write out
+write.csv(MB_ap, "~/MB_air_pollution/2024_02_12_MB_ap.csv")
+
+#Read it back in for next session  
+MB_ap <- read.csv("~/2024_02_12_MB_ap.csv")
+
+
+
+```
+
+## Missing air pollution data
+
+Pollution data were missing for one day during the time series, and were imputed linearly from the previous and following day.
+
+Testing
+
+```{r}
+
+
+#Okay, we're missing all pollution data for one day 2017-06-05
+missing_NO2 <- MB_ap[is.na(MB_ap$no2), ]
+
+around_missing <- MB_ap[MB_ap$date >= "2017-06-01" & 
+                        MB_ap$date <= "2017-06-10", ]
+
+
+#Peter recommends linear imputation
+#As in take the mean of the values above and below
+#https://stackoverflow.com/questions/27920690/linear-interpolation-using-dplyr
+#"[...] the Rule option allows extrapolation into the flanking time points." c.a.d. one day above and below. 
+
+
+library("dplyr")
+around_missing$no2_ip <- na.approx(around_missing$no2, rule = 1)
+around_missing$pm25_ip <- na.approx(around_missing$pm25, rule = 1)
+around_missing$o3_ip <- na.approx(around_missing$o3, rule = 1)
+around_missing$so2_ip <- na.approx(around_missing$so2, rule = 1)
+```
+
+Interpolating pollution for missing day in whole dataset
+
+```{r}
+
+library("dplyr")
+
+MB_ap$no2 <- na.approx(MB_ap$no2, rule = 1)
+MB_ap$pm25 <- na.approx(MB_ap$pm25, rule = 1)
+MB_ap$o3 <- na.approx(MB_ap$o3, rule = 1)
+MB_ap$so2 <- na.approx(MB_ap$so2, rule = 1)
+
+```
+
+### Write out & read in
+
+```{r}
+
+
+#Write out at home
+write.csv(MB_ap, "~/2024_02_13_MB_ap.csv")
+
+#Read it back in for next session  
+MB_ap <- read.csv("~/2024_02_13_MB_ap.csv")
+
+
+
+```
+
+## Pollution Correlation
+
+```{r}
+
+cor(MB_ap$no2, MB_ap$pm25,  method = "pearson")
+    
+pollutants <- subset(MB_ap, select = c(no2, pm25, o3, so2))
+
+cor(pollutants, method = "pearson")
+```

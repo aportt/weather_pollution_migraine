@@ -1,0 +1,763 @@
+---
+ ---
+title: "2 MB_air_pollution_link"
+author: "Andrea Portt"
+format: html
+editor: visual
+---
+
+# Link MB data to Air Pollution Data
+
+## Migraine Buddy to postal codes for linkage to air pollution via latitude and longitude
+
+Environment and Climate Change Canada's data was processed to nearest postal code externally.
+
+I linked postal codes to Migraine Buddy in ArcGIS.
+
+The postal code layer/map, is now joined to the list of postal codes with air pollution using ArcGIS. (2023 08 02 Linking_postal_codes)
+
+Next we needed a list of the XY lat/long co-ordinates linked to the closest postal code that has air pollution data.
+
+Keep the column that lists whichever of all postal codes is nearest, to confirm the next join.
+
+```{r}
+#| echo: false
+
+MB <- read.csv("~/MB_Postal_code_link.csv")
+
+MB_latlong <- data.frame(MB[,10:11]) #make a dataframe and pull in lat and long
+MB_latlong$mb_postalcodes <- MB$POSTALCODE #add postal codes from last column
+
+
+install.packages("dplyr")
+library("dplyr")
+
+MB_latlong <- distinct(MB_latlong,  .keep_all = FALSE) # keep only unique rows
+
+install.packages("tidyverse")
+library("tidyverse")
+
+MB_latlong <- MB_latlong %>% 
+              add_column(mb_present = "2")
+
+# write.csv(MB_latlong, "//utl.utoronto.ca/Staff/Data/gispc2/My Documents/aportt/Master coding files/2023_08_09_mb_latlong.csv")
+
+```
+
+Read in Migraine Buddy data that was linked to the closest of *all* Ontario postal codes. At the Map and Data library, in ArcGIS Pro version 3.0.3, we worked with this dataset to connect the Migraine Buddy data to the closest postal code *with air pollution data* from ECCC via the technician at Health Canada.
+
+```{r}
+#| echo: false
+MB <- read.csv("~/MB_Postal_code_link.csv")
+
+```
+
+Then I read the Migraine Buddy data back in, now that it's linked to the postal codes with air pollution data:
+
+```{r}
+#| echo: false
+
+#home 
+MB <- read.csv("~/20230811_mb_ap_postal.csv")
+
+
+
+```
+
+Get the date in base code.
+
+Set time zone as America/New York to prevent rounding errors because the second row and others that were entered late in the day were being changed to next-day.
+
+```{r}
+#| echo: false
+MB$start_date <- as.Date(MB$starttime_local, 
+                         tz = "America/New_York")
+
+#write.csv(df, "~/2023_07_06MB_postal_dates.csv", row.names=FALSE)
+
+
+```
+
+### Tidy Migraine dataset
+
+1.  Trim the dates to include only the air pollution dates (remove 2016)
+
+    1.  Make a column of year
+
+    2.  Remove rows with year = 2016, 2020, 2021 --\> 145,984 rows remaining
+
+        https://statisticsglobe.com/r-remove-row-from-data-frame-condition
+
+```{r}
+
+#| echo: false
+#| include: false
+
+#Separate date from time columns using stringr
+install.packages("stringr")
+library(stringr)
+
+MB[c('year', 'month', "day")] <- str_split_fixed(MB$start_date, '-', n = Inf)
+
+# Remove rows based on condition
+MB <- MB[MB$year != 2016 & 
+           MB$year != 2020 &
+           MB$year != 2021, ]    
+
+# Remove unneccessary columns
+#first column name tends to change depending on where it's imported
+
+MB <- MB[-1]
+
+#Delete weather variables that are empty for 2017-2019
+MB <- subset(MB, select = -c( pressure, temperature, humidity, 
+                             pressure_change_24_hr))
+
+
+```
+
+# Migraine Time Series Preparation
+
+## For-loop over 3 years
+
+In this section I expand the Migraine Buddy dataset so that each participant has at least one row for each day. Then I combine rows in cases where one person had more than one row per day (as in, when someone recorded more than one migraine attack per day.)
+
+```{r}
+#| echo: false
+#| print: false
+
+
+#Make my own list of dates
+#short list to play with, then expand to 1095 days
+# defining start date 
+date <- as.Date("2017-01-01") 
+
+# defining length of range  
+#No leap years in 2017, 2018, 2019
+len <- (365*3)
+
+# generating range of dates 
+dates <- seq(date, by = "day", length.out = len)
+
+# 14,981 unique IDs
+seqID <- sort(unique(MB$random_uid))
+
+
+#Create a dataframe of all dates for all unique random_uids
+#expanded by 365 days each makes 14,981*1095 = 16,404,195 "full" date ranges!
+MB_UID_dates <-expand.grid(random_uid=seqID, date=dates)
+
+#Concatenate UID_dates
+MB$cat <- paste(MB$random_uid, MB$start_date)
+
+MB_UID_dates$cat <- paste(MB_UID_dates$random_uid, MB_UID_dates$date)
+
+
+#So, each of these "extra" rows has information of the migraine event that I don't want to lose
+#I'd like to collapse the rows while keeping the data
+
+#####Talking about loops 
+#Before the merge,
+#We want one row per person/date 
+#Start with a dataset that only has rows with unique UID-date and start-time (startttime_Local)
+#Can use arrange function
+
+#Make a for loop
+#starting the for-loop
+#https://mdl.library.utoronto.ca/technology/tutorials/intermediate-r-course
+
+#Make a sequence of all the IDs with duplicates
+#From that list, take those greater than 1
+#list is of concatenated ID-dates
+#For loop goes over that short list of duplicates cat IDs
+#For the variables that don't change in the same day (eg age), they take the same value. 
+  #extract first value
+  #[age will change for some people over time, but not within a day, most days] 
+
+#For the variables that change, have 2 types: one is end time - use max function to find latest date, or last row if sorted by date
+
+#For the text ones, combine them, focus on the rows for that individual.
+#Concatenate and separate by semi colon
+
+#Look though variables and what I want to do with them
+
+#The for-loop is taking the list of unique concatenated person-dates $cat with more than one row
+#From there it takes the values ofthe first row by default
+#If that changes, I need to select or concatenate appropriately
+
+# control shift m = pipe %>%
+
+#in duplicate_list[1]; square bracket is saying just use the first in this list
+
+#Select the last in a row in temporary duplicates using  temporary_duplicates$endtime_local[nrow(temporary_duplicates)] because last() and [-1] didn't work. 
+
+#Arrange by random_uid and starttime_local so we have a time series dataframe
+install.packages("tidyverse")
+library(tidyverse)
+MB <- MB %>% arrange(random_uid, starttime_local)
+
+#Add a column called "duplicate" which tells us how many rows have the same 
+#random_uid & start date
+MB <- MB %>% group_by(random_uid, start_date) %>% mutate(duplicate = n())
+
+table(MB$duplicate)
+
+#Make a list with repeat person-dates
+duplicate_list <- unique(MB$cat[MB$duplicate > 1])
+
+#Make a new dataframe with just single person-dates, then loop
+MB_single_rows <- MB %>% filter(duplicate == 1)
+
+for (rowID in duplicate_list) {
+  #print(rowID) #print new row at top of loop only for troubleshooting 
+  temporary_duplicates <- MB %>% filter(cat == rowID)
+  new_row <- temporary_duplicates %>% first()
+  new_row$endtime_local <- temporary_duplicates$endtime_local[nrow(temporary_duplicates)] 
+  new_row$pain_intensity <- max(temporary_duplicates$pain_intensity)
+  new_row$attack_type <-list(temporary_duplicates$attack_type) 
+   new_row$attack_type <- toString(new_row$attack_type)
+  new_row$related_symptoms <- list(temporary_duplicates$related_symptoms)
+  new_row$related_symptoms <- toString(new_row$related_symptoms)
+  new_row$pain_position <- list(temporary_duplicates$pain_position)
+  new_row$pain_position <- toString(new_row$pain_position)
+  new_row$affected_activities <- 
+    list(temporary_duplicates$affected_activities)
+  new_row$affected_activities <- toString(new_row$affected_activities)
+  new_row$menstruation_status <- 
+    list(temporary_duplicates$menstruation_status)
+  new_row$menstruation_status <- toString(new_row$menstruation_status)
+  MB_single_rows[nrow(MB_single_rows) +1, ] <- new_row # Append new row
+}
+
+
+#Try it with one person first, 
+#Can this for-loop combine this person's 4 events that were in one day?
+#Then try two people
+#Then ten
+#Then 3 days
+#then more
+#then everything and cross fingers
+
+#merge by location-dates
+#expect 16,404,195 rows ... and have  16,404,195   rows! Because the repeated people-day migraine events have been merged to one per day
+MB_single_expanded <- merge(x = MB_single_rows, y = MB_UID_dates, by = "cat", all = TRUE)
+
+#That took a while to loop, write it out for future use
+#Taking a while to write out (1.5 + hours and counting)
+
+#Write out:
+write.csv(MB_single_expanded, "//utl.utoronto.ca/Staff/Data/gispc2/My Documents/aportt/2023_12_01_MB_single_expanded.csv" )
+
+```
+
+### Import expanded MB dataset
+
+```{r}
+#| echo: false
+#| print: false
+
+#wow that took a long time to loop over 3 years and then expand
+#Let's import the csv so far to save time in next steps:
+
+#Home
+MB_single_expanded <- read.csv("~/2023_12_01_MB_single_expanded.csv")
+
+
+
+#Save the image since that takes forever to import
+save.image()
+
+#Need to do some cleaning after this  merge
+
+#Tidy up the new dataset
+#Drop unneeded columns
+MB_single_expanded <- subset(MB_single_expanded, 
+                             select = 
+                                     -c(X, cat, random_uid.x, duplicate))
+
+#Rename
+install.packages("tidyverse")
+library(tidyverse)
+MB_single_expanded <- MB_single_expanded %>% 
+        rename(random_uid = random_uid.y,)
+
+
+
+#Removing folks who have only NA for postal codes
+# 1. Make a column of number of postal codes that are NA
+MB_single_expanded <- MB_single_expanded %>% 
+  group_by(random_uid) %>% 
+  mutate( pc_missing = sum(is.na(ap_POSTALC)))
+  
+# 2. Filter out those who have 1094 NA postal codes (3 years)
+# Then remove the column we don't need anymore
+MB_single_expanded <- MB_single_expanded %>% 
+  filter(pc_missing != 1094) %>% 
+  select( - pc_missing)
+
+
+#Move date to first column
+MB_single_expanded <- MB_single_expanded %>% 
+        select(date, everything())
+
+# Move random_uid column to first 
+MB_single_expanded <- MB_single_expanded %>% 
+        select(random_uid, everything())
+
+#Arrange again by random_uid and starttime_local so we have a time series dataframe
+MB_single_expanded <- MB_single_expanded %>% arrange(random_uid, date)
+
+save.image()
+```
+
+## Add day of week
+
+```{r}
+
+#Add a column with day of  the week
+# 7 = Week starts on Sunday
+install.packages("lubridate")
+library(lubridate)
+MB_single_expanded$dow <- wday(MB_single_expanded$date, week_start = 7) 
+
+```
+
+## Notes on mobility
+
+```{r}
+
+#Find which random_uids have more than one postal code 
+#Check out patterns
+#Subset a dataframe with them
+#Using a loop through each random_uid
+#Set up assumptions about people who move 
+#Movement: When attacks have not been recorded (and therefore location of previous days is currently NA, person is assumed to have been at the place that they are recording the event for the previous days until the previous recorded event). 
+
+#Add a column called "count_postal" which tells us how many postal codes each person recorded migraines in
+library(tidyverse)
+library(dplyr)
+
+MB_single_expanded <- MB_single_expanded %>%
+        group_by(random_uid, ap_POSTALC) %>%
+        mutate(count_postal = n()) #Includes NA
+      
+MB_single_expanded <- MB_single_expanded %>%
+        group_by(random_uid) %>%
+         mutate (distinct_postals = n_distinct(ap_POSTALC))
+ 
+#The median number of postal codes was 2 (subtract one for NA), and the max was 19. 
+summary(MB_single_expanded$distinct_postals)
+table(MB_single_expanded$distinct_postals)
+
+```
+
+### Write out and in
+
+```{r}
+#Write this out again because the above steps run so slowly: 
+write.csv(MB_single_expanded, "~/2023_12_11_MB_single_expanded.csv" )
+
+#Read it back in for next session  
+
+#Home
+MB_single_expanded <- read.csv("~/2023_12_11_MB_single_expanded.csv")
+
+
+```
+
+### Fill in mobility
+
+```{r}
+
+
+#Remove NA
+no_NA_MB_single_expanded <- MB_single_expanded %>% 
+        drop_na(ap_POSTALC) %>% 
+        group_by(random_uid) %>% 
+        mutate (no_NA_distinct_postals = n_distinct(ap_POSTALC))
+
+#Check:
+table(no_NA_MB_single_expanded$no_NA_distinct_postals)
+
+#Arrange  by random_uid and starttime_local so we have a time series dataframe
+no_NA_MB_single_expanded <- no_NA_MB_single_expanded %>% arrange(random_uid, date)
+
+
+#Get into time series order
+MB_single_expanded <- MB_single_expanded %>% arrange(random_uid, date)
+
+#https://tidyr.tidyverse.org/reference/fill.html
+#With grouped data frames created by dplyr::group_by(), fill() will be applied #within each group, meaning that it won't fill across group boundaries.
+
+library(dplyr)
+
+#Fill "up" on assumption that our best guess at their location yesterday is info on today, unless they told us otherwise
+MB_single_expanded <- MB_single_expanded %>% 
+                      group_by(random_uid) %>% 
+                      fill(ap_POSTALC, .direction = "up")
+
+MB_single_expanded <- MB_single_expanded %>% 
+                      group_by(random_uid) %>%
+                      fill(latitude, .direction = "up")
+
+MB_single_expanded <- MB_single_expanded %>% 
+                      group_by(random_uid) %>% 
+                      fill(longitude, .direction = "up")
+
+#For completeness, fill "down" between last event and end of study period.
+MB_single_expanded <- MB_single_expanded %>% 
+                      group_by(random_uid) %>% 
+                      fill(ap_POSTALC, .direction = "down")
+
+MB_single_expanded <- MB_single_expanded %>% 
+                      group_by(random_uid) %>% 
+                      fill(latitude, .direction = "down")
+
+MB_single_expanded <- MB_single_expanded %>% 
+                      group_by(random_uid) %>% 
+                      fill(longitude, .direction = "down")
+
+#Let's grab a subset from a participant who moved around a lot
+
+Mover_A <- MB_single_expanded[MB_single_expanded$random_uid ==                        'redacted',]
+
+#Drop extra columns 
+
+MB_single_expanded <- MB_single_expanded %>% 
+                        select (-c(X, count_postal, count_test, 
+                                distinct_postals))
+
+
+#Save the image to R Studio so that I don't have to wait half an hour for 
+#datasets to import
+save.image()
+
+
+#Once every date has a postal code: 
+#Concatenate postalcode-dates for merging with air pollution data
+
+MB_single_expanded$postal_cat <- paste(MB_single_expanded$ap_POSTALC, MB_single_expanded$date)
+
+#Check if there's a day at the end of the study that's missing air pollution data... Yes! We are missing December 31st, 2019 because we only have UTC's Dec 31st, 2019.Which was the 30th here in Ontario 
+#Remove this date from MB data at end of mobility section
+MB_single_expanded <- MB_single_expanded[MB_single_expanded$date != "2019-12-31",]
+
+#stop and check: how many rows do we have now? 
+#Before I removed a day from MB data, we had 11185425 rows for 10215 participants. 
+#removing one day's worth of rows per participant does leave 
+#11185425-10215
+#[1] 11175210 = current number of rows, good. 
+
+```
+
+## Nadia's advice to troubleshoot for loops
+
+1.  To find the list on the item that doesn't work:
+    1.  walk through \[1\] then \[2\] etc...
+    2.  Or, add print(rowID) into top of loop (see code chunk below)
+        1.  This will help you find which rowID stops the loop
+        2.  then use which(data\$x2 == 7) to find where that is in the main dataframe
+    3.  Then comment out one row at at time to find the glitch within the loop
+
+```{r}
+#For loop practice
+
+for (rowID in uids) {
+  #print(rowID) #print new row at top of loop only for troubleshooting 
+  temp_postal_list <- MB_single_expanded %>% filter(random_uid == rowID)
+  #Movement treatment A: Assign unknown previous locations to event day's location
+   max_postal <- temp_postal_list %>% max(ap_POSTALC)
+   MB_single_expanded[MB_single_expanded$random_uid == rowID,] 
+        <- MB_single_expanded %>% filter(random_uid == rowID) %>% 
+   replace_na(ap_POSTALC, max_postal)
+
+}
+
+
+```
+
+Helpful loop links:
+
+https://mdl.library.utoronto.ca/technology/tutorials/intermediate-r-course
+
+https://datacarpentry.org/semester-biology/materials/for-loops-R/
+
+https://www.projectpro.io/recipes/append-output-from-for-loop-dataframe-r#:\~:text=To%20store%20for%20loop%20output,dataframe%20combining%20all%20iterations'%20output.
+
+Try this: https://www.projectpro.io/recipes/append-output-from-for-loop-dataframe-r
+
+https://statisticsglobe.com/append-to-data-frame-in-loop-in-r
+
+## Air pollution dataset cleaning, prep for linkage
+
+Read in the Air pollution data:
+
+This is the air pollution data that I linked to the postal codes via ID2 (10 km x 10 km modelling pixels)
+
+```{r}
+#home ap <- read.csv("~/dailyap_2_ExportTable.csv")
+
+
+ap_original <- read.csv("~/dailyap_2.csv")
+```
+
+1.  Add place holder-columns for ArcGIS joins
+
+    ```{r}
+    #| echo: false
+
+    ap_postal <- read.csv("~/2023_08_01_ap_postal.csv")
+
+
+    install.packages("tidyverse")
+    library("tidyverse")
+
+    ap_postal <- ap_postal %>% 
+                  add_column(ap_present = "1")
+
+
+
+    # write.csv(MB_postal,"~/2023_08_01_MB_postal2.csv")
+
+
+      
+
+    ```
+
+Write out to a csv in case it's easier to join on date and postal code in ArcGIS:
+
+```{r}
+#write.csv(ap_original, "~/2023_07_26_ap_original.csv", row.names=FALSE)
+```
+
+# Air pollution Stop and Check
+
+In ArcGIS, I Joined the air pollution dataset to a list of the postal codes that have air pollution data and link to a Migraine Buddy datapoint, and then deleted any which wouldn't join to migraine, which considerably reduces the number of air pollution postal codes for further processing.
+
+In the daily air pollution dataset , when I use ArcGIS to delete the rows with null ap_postal codes, do we end up with the correct number left over?
+
+Initial dataset had 1,288,732 rows (1178 postal codes x 1,094 days)
+
+There are only 460 unique air pollution postal codes linked to migraine data, even though there were 580 MB postal codes. This makes sense because Anton helped me see that some air pollution postal codes are the closest to more than one migraine buddy location (eg Davisville maps to an Etobicoke postal code 14 km away, as do several others).
+
+460 x 1,094 = 503,240 postal code days expected
+
+The new dataset has only 502,146 rows, meaning one postal code location is missing.
+
+...Turns out the missing postal code is just a space " "
+
+Drop as an artifact and keep going with 502,146 rows, 459 postal codes.
+
+```{r}
+#| echo: false
+#| print: false
+
+#home
+ap_all <- read.csv("~/20230815_daily_ap_postal.csv")
+ap <- read.csv("~/20230815d_daily_ap.csv")
+
+
+install.packages("dplyr")
+library("dplyr")
+
+n_distinct(ap$ap_POSTALC)
+#459 distinct postal codes
+
+```
+
+### Subset air pollution dataframe to relevant columns
+
+```{r}
+#| echo: false
+
+ap = subset(ap, select = c(ID2, date, no2, pm25, o3, so2, 
+                           PCODE, ID2_1, ap_POSTALC))
+
+#drop Dec 31 2016 air pollution data, which doesn't exist in Migraine Buddy data that starts the next day, therefore no possibility of migraine attack data.
+
+ap <- ap[ap$date_local != "2016-12-31",]
+
+#Check if there's a day at the end of the study that's missing air pollution data... Yes! We are missing December 31st, 2019 because we only have UTC's Dec 31st, 2019. 
+#Remove this date from MB data above (at end of mobility section)
+#Now instead of 1095 days in the study period, we have 1094
+#Every day from Jan 1 2017 to Dec 30 2019
+
+```
+
+### Round air pollution data
+
+The data provided by ECCC are massive for processing and have 6-10 decimal places.
+
+Round everything to 4 significant digits and move on. This greatly reduces processing times.
+
+```{r}
+#| echo: false
+#| include: false
+ap$no2 <- round(ap$no2, 4)
+ap$pm25 <- round(ap$pm25, 3) 
+ap$o3<- round(ap$o3, 2)
+ap$so2<- round(ap$so2, 4)
+       
+```
+
+### Change date to just date
+
+The date column is a character and it needs to be split, converted to date, and be set a day back. Not necessarily in that order.
+
+```{r}
+
+
+#| echo: false
+#| include: false
+#| label: separate_date_times
+
+#Separate date from time columns using stringr
+install.packages("stringr")
+library(stringr)
+
+ap[c('date_utc', 'start_time')] <- str_split_fixed(ap$date, ' ', n = Inf)
+
+#convert character 'dates' to date format using lubridate
+install.packages("lubridate")
+library(lubridate)
+ap$date_utc <- mdy(ap$date_utc)
+
+```
+
+1.  All air pollution times are 0h00 UTC (which is Greenwich time, 5 hours ahead of Ontario)
+
+Which means my pollution values are all for 8 PM the night before the day they are linked to.
+
+1.  Set all dates back by one day, because all dates are from 0h00 UTC, and in Ontario at midnight Greenwich time, it is 7 PM the night before (5 hours difference).
+
+```{r}
+#| echo: false
+#| include: false
+
+#Reduce dates by one day to adjust for the fact that 0:00h UTC is -5:00 Ontario time
+
+ap$date_utc <- as.Date(ap$date_utc, 
+                         tz = "America/New_York")
+
+ap$date_local <- ap$date_utc - 1
+
+```
+
+Then drop the extra date and time columns
+
+## Merge MB and air pollution dataframes based on date and postal code
+
+Concatenate dates and postal code as prep for joining MB and air pollution
+
+```{r}
+#| echo: false
+
+ap$postal_cat <- paste(ap$ap_POSTALC, ap$date_local)
+
+#write out 
+
+ write.csv(MB,"~/2023_11_10_MB_concat.csv")
+ 
+  write.csv(ap,"~/2023_11_10_ap_concat.csv")
+        
+```
+
+### Merge air pollution migraine
+
+```{r}
+#| echo: false
+
+# Left join keeps just the MB data and drops empty rows of air pollution data that don't overlap with any participants' location-days. 
+#https://r-coder.com/merge-r/
+#https://www.geeksforgeeks.org/how-to-merge-dataframes-in-r/?ref=ml_lbp
+
+#Left join to keep all MB data and drop extra air pollution data
+
+#Starting with 11,175,210 rows in MB_single_expanded
+#And get out the same number of rows, good. 
+MB_ap <- merge(x = MB_single_expanded, y = ap, by = "postal_cat", all.x  = TRUE)
+
+save.image()
+
+#Arrange back into time series
+
+MB_ap <- MB_ap %>% 
+        arrange(random_uid, date.x)
+
+#Stop and check
+#Compare one (complicated) person's merge with air pollution data
+#Looks good
+
+Mover_A <- MB_ap[MB_ap$random_uid == 'redacted',]
+
+Mover_ap <- subset(ap, ap_POSTALC == "L0G1R0")
+Mover_ap <- subset(ap, ap_POSTALC == "N1C0A1")
+
+#And then drop unneeded columns
+
+MB_ap <- MB_ap %>% 
+        select (-c(postal_cat, ID2, date.y, PCODE, 
+                   ap_POSTALC.y, ID2_1, date_utc, 
+                   start_time, date_local))
+
+#Rename date
+MB_ap <- MB_ap %>% 
+        rename(date = date.x,)
+
+save.image()
+```
+
+### Write out and in
+
+```{r}
+#Write this out again:
+write.csv(MB_ap, "~/2023_12_13_MB_ap.csv")
+
+#Read it back in for next session  
+
+#Home
+MB_ap <- read.csv("~/2023_12_13_MB_ap.csv")
+
+```
+
+If not enough processing power: Nadia Muhe suggests reaching out for a SciNet account (U of T supercomputers, based at MaRS)
+
+## Overall pollution
+
+Less important for analysis than individual ranges.
+
+But nice to include in an abstract
+
+```{r}
+
+#Overall pollution interquartile ranges
+
+summary(MB_ap$no2) 
+summary(MB_ap$pm25) 
+summary(MB_ap$o3) 
+summary(MB_ap$so2) 
+
+#pollution interquartile ranges grouped by random_uid
+
+#This doesn't give me what I'm looking for - exact same results as overall above
+quartiles <- MB_ap %>% 
+         group_by(random_uid) %>% 
+         summary(no2)
+
+print(quartiles)
+
+#Make an empty column for first quartile per random_uid
+MB_ap['no2Q1'] <- NA
+
+
+MB_ap$no2q1 <-quantile(MB_ap$no2, probs = c(0.25), na.rm = TRUE) 
+
+
+MB_ap['no2Q1'] <- NA
+
+MB_ap <- MB_ap %>% 
+        group_by(random_uid) %>% 
+        mutate(no2q1 = quantile(MB_ap$no2, probs = c(0.25), na.rm = TRUE))
+
+
+```

@@ -1,0 +1,133 @@
+---
+title: "5c weather variables"
+author: "Andrea Portt"
+format: html
+editor: visual
+---
+
+# Packages & data
+
+```{r packages, message=FALSE}
+library(dlnm) ; library(gnm) ; library(data.table) ; library(splines)
+library(dplyr); 
+library("stringr"); 
+library(tidyr)
+library(ggplot2)
+library(correlation)
+
+```
+
+```{r}
+#| output: false 
+
+#MB dataset 
+load("~/2024_11_15_MB.Rdata")
+
+
+```
+
+# Weather variables
+
+## Temp
+
+```{r}
+
+#Plot
+g <- ggplot(data, aes(temp_12))+
+        geom_histogram()
+g
+
+#Quantiles
+quantile(data$temp_00)
+IQR(data$temp_00)
+
+#Correlations
+#ungroup dataframe so I can get the group-level correlations instead of 1000 x 6 
+
+data_ungroup <- as.data.frame(data)
+
+#All temperature measures have correlations between r = 0.94 and 0.99
+#:. all temperature measures are essentially equal to one another. 
+# Max temperature is correlated at 0.99 to temp_00, UTC 00h or 7 PM Ontario
+# Min temperature is correlated at r = 0.99 to temp_12, UTC 12h or 7 AM Ontario
+#Given that these are essentially all equivalent
+#And Peter's work suggesting that nighttime temperatures are most important for heat-related workplace injury, I will move forward using temp_12, which is 7 AM Ontario time / almost perfectly corresponds to minimum temp of the day, eg the nighttime low
+#This will capture heatwaves and cold snaps
+corr_temps <- data_ungroup %>% 
+        correlation(select = c( "temp_00", "temp_12", "temp_min", "temp_max")) 
+
+ 
+```
+
+## Humidity
+
+```{r}
+
+#Plot evening humidity
+h <- ggplot(data, aes(humid_00h1000))+
+        geom_histogram()
+h
+
+#Plot morning humidity
+i <- ggplot(data, aes(humid_12000))+
+        geom_histogram()
+i
+
+#Look at correlations between morning humidity, evening humidity, and temperature
+# temp_12 and humid_00h1000 - 0.87
+#Temp_12 and humid_12000 - 0.92
+# humid_00h1000 and humid_12000 - 0.93
+data_ungroup <- as.data.frame(data)
+corr_humid <- data_ungroup %>% 
+        correlation(select = c( "temp_12", "humid_00h1000", "humid_12000")) 
+
+quantile(data$humid_00h1000)
+IQR(data$humid_00h1000)
+quantile(data$humid_12000)
+IQR(data$humid_12000)
+
+#Both humidity time points are essentially equal. 
+#Look to see if including either in a model with temperature makes a difference to AIC
+
+
+```
+
+## Barometric pressure
+
+```{r}
+
+#Plot evening barometric pressure
+j <- ggplot(data, aes(pres_00))+
+        geom_histogram()
+j
+
+#Plot morning barometric pressure
+k <-  ggplot(data, aes(pres_12))+
+        geom_histogram()
+k
+
+#Plot change in barometric pressure
+l <- ggplot(data, aes(pres_change_24h))+
+        geom_histogram()
+l
+
+#Look at correlations between morning barometric pressure, evening barometric pressure, pressure change, and temperature
+#Temperature and pressures are not the same
+#morning and evening pressure are correlated r = 0.91
+#pressure change is not correlated with temperature or with morning or evening pressure
+data_ungroup <- as.data.frame(data)
+corr_pres <- data_ungroup %>% 
+        correlation(select = c( "temp_12", "pres_00", "pres_12", "pres_change_24h")) 
+
+quantile(data$pres_00)
+IQR(data$pres_00)
+quantile(data$pres_12)
+IQR(data$pres_12)
+quantile(data$pres_change_24h)
+IQR(data$pres_change_24h)
+
+#Both barometric pressure time points are essentially equal. 
+#Look to see if including either in a model with temperature makes a difference to AIC
+
+
+```
